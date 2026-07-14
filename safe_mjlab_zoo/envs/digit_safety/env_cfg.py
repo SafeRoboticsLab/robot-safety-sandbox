@@ -7,10 +7,10 @@
   * boundary experience comes from the ADVERSARY (worst-case torso force), the
     way ``go2_stabilize`` does, not from a widened spawn distribution.
 
-Phase-1 compat: the Digit robot asset + calibrated safety env live in the mjlab
-fork (``mjlab.tasks.velocity.config.digit_v3``), imported here rather than
-vendored. The cfg is otherwise used UNMODIFIED — the zoo bridge auto-detects the
-``actor`` observation group, and drops ``push_robot`` itself (the adversary
+The Digit robot asset + calibrated safety env builders are VENDORED into the
+zoo (``envs/assets_digit`` + ``envs/digit_safety/builders.py``) — no mjlab-fork
+dependency. The cfg is otherwise used UNMODIFIED — the zoo bridge auto-detects
+the ``actor`` observation group, and drops ``push_robot`` itself (the adversary
 replaces it). Action scaling is the bridge's ``ctrl_gain`` (see
 tasks/digit_safety), so the policy keeps SB3's natural [-1, 1] action range.
 """
@@ -18,11 +18,12 @@ tasks/digit_safety), so the policy keeps SB3's natural [-1, 1] action range.
 from __future__ import annotations
 
 from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.tasks.velocity.config.digit_v3.env_cfgs import (
+from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+
+from safe_mjlab_zoo.envs.digit_safety.builders import (
   digit_v3_flat_safety_box_rigidtoe_env_cfg,
   digit_v3_flat_safety_rigidtoe_env_cfg,
 )
-from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 
 
 def _pin_twist(cfg: ManagerBasedRlEnvCfg, vx: float) -> None:
@@ -105,7 +106,8 @@ def digit_box_stabilize_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # (constructs + trains); the occasional CCD-saturation NaN is contained by
   # nan_term below. WATCH Episode_Termination/nan_term.
   cfg.sim.mujoco.ccd_iterations = 500
-  from mjlab.envs import mdp as _envs_mdp
   from mjlab.managers.termination_manager import TerminationTermCfg
-  cfg.terminations["nan_term"] = TerminationTermCfg(func=_envs_mdp.nan_detection)
+
+  from safe_mjlab_zoo.envs.digit_safety import mdp as _zoo_mdp
+  cfg.terminations["nan_term"] = TerminationTermCfg(func=_zoo_mdp.nan_detection)
   return cfg

@@ -1,2 +1,2 @@
-"""Digit v3 safety-filter environment (phase-1 compat: needs the mjlab fork
-with digit_v3 on sys.path)."""
+"""Digit v3 safety-filter environment (asset + builders vendored in the zoo;
+runs on stock mjlab — no fork dependency)."""
