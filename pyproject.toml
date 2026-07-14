@@ -12,7 +12,8 @@ dependencies = [
   "numpy",
   "gymnasium",
   "stable_baselines3>=2.0",
-  # peer deps (install separately): mjlab, safety_sb3
+  "safety_sb3 @ git+https://github.com/SafeRoboticsLab/safety-stable-baselines.git@v0.1.0",
+  # peer dep (install separately -- needs its own pinned sim stack): mjlab
 ]
 
 [tool.setuptools.packages.find]

@@ -35,10 +35,15 @@ pip install torch --index-url https://download.pytorch.org/whl/cu128
 pip install "mjlab==1.2.0" "mujoco==3.6.0" "mujoco-warp==3.6.0" \
             "warp-lang==1.12.0" scipy
 
-# 3. the two packages (editable for development):
-pip install "stable_baselines3>=2.0" wandb tensorboard imageio moviepy
-pip install -e path/to/safety-stable-baselines
+# 3. this package. safety_sb3 is a declared pip dependency (pinned release
+#    tag from GitHub), so one editable install pulls both:
+pip install wandb tensorboard imageio moviepy
 pip install -e path/to/safe-mjlab-zoo
+
+#    developing BOTH packages at once? install safety_sb3 editable FIRST and
+#    it satisfies the requirement:
+# pip install -e path/to/safety-stable-baselines
+# pip install -e path/to/safe-mjlab-zoo
 ```
 
 **Headless machines** (no display — clusters, ssh boxes): eval-video rendering
