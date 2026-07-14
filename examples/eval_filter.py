@@ -52,6 +52,7 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg  # noqa: E402
 
 from safety_sb3 import ReachAvoidPPO, SafetyPPO  # noqa: E402
 from safe_mjlab_zoo import spec  # noqa: E402
+from safe_mjlab_zoo.filters import ValueShield  # noqa: E402
 
 CTRL_GAIN = 3.0        # bridge convention: policy action * gain -> env action
 # terrain geometry is task-dependent -> CLI args (--gap-x/--rest-x/--spawn-x):
@@ -179,45 +180,10 @@ def load_safety(zip_path: str, device: str):
 
 
 # --- filter ------------------------------------------------------------------
-
-class BatchValueFilter:
-  """Latched eps-switch with median-smoothed V + a CAUTION band (identical
-  protocol for both twins).
-
-  Caution band (the old play_filtered mechanism, batched): while
-  eps < V <= caution, the WALKER'S COMMAND is zeroed — the walker decelerates
-  itself (an in-distribution slowdown), so if V keeps dropping the handover
-  happens from a braking stance instead of mid-trot, and after a save the
-  released walker doesn't sprint straight back into re-engagement chatter."""
-
-  def __init__(self, n, device, eps, caution=0.45, hysteresis=0.15,
-               rest_speed=0.4, disabled=False):
-    self.eps, self.caution = eps, max(caution, eps)
-    self.hys, self.rest = hysteresis, rest_speed
-    self.disabled = disabled
-    self.engaged = torch.zeros(n, dtype=torch.bool, device=device)
-    self.v_hist = None
-    self.overrides = torch.zeros(n, device=device)   # engaged-step counter
-    self.cautions = torch.zeros(n, device=device)
-
-  def update(self, v_raw, speed, fresh):
-    if self.v_hist is None:
-      self.v_hist = v_raw.unsqueeze(0).repeat(5, 1)
-    self.v_hist = torch.cat([self.v_hist[1:], v_raw.unsqueeze(0)], dim=0)
-    if bool(fresh.any()):
-      self.v_hist[:, fresh] = v_raw[fresh].unsqueeze(0)
-      self.engaged &= ~fresh
-    v_med = self.v_hist.median(dim=0).values
-    engage = (v_med <= self.eps) | (v_raw <= self.eps - 0.15)
-    release = (v_med > self.eps + self.hys) & (speed < self.rest)
-    self.engaged = (self.engaged | engage) & ~release
-    caution = (v_med <= self.caution) & ~self.engaged
-    if self.disabled:
-      self.engaged = torch.zeros_like(self.engaged)
-      caution = torch.zeros_like(caution)
-    self.overrides += self.engaged.float()
-    self.cautions += caution.float()
-    return self.engaged, caution
+# The latched eps-switch + caution band lives in the library now
+# (safe_mjlab_zoo.filters.ValueShield); this script wires the twin's value
+# head and fallback policy into it and keeps the walker-command surgery
+# (caution -> zero command) at the call site, where the env lives.
 
 
 # --- main --------------------------------------------------------------------
@@ -281,8 +247,18 @@ def main():
                p_star=p_star,
                latch=torch.zeros(args.num_envs, dtype=torch.bool, device=device))
     hyb_steps = 0
-  filt = BatchValueFilter(args.num_envs, device, args.eps, caution=args.caution,
-                          hysteresis=args.hysteresis, disabled=args.no_filter)
+  def _value_fn(s_obs):
+    with torch.no_grad():
+      return safety.policy.predict_values(s_obs).squeeze(-1)
+
+  def _fallback_fn(s_obs):
+    with torch.no_grad():
+      return torch.clamp(safety.policy._predict(s_obs, deterministic=True),
+                         -1.0, 1.0)
+
+  filt = ValueShield(args.num_envs, device, _value_fn, _fallback_fn,
+                     eps=args.eps, caution=args.caution,
+                     hysteresis=args.hysteresis)
 
   robot = env.scene["robot"]
   origin_x = env.scene.env_origins[:, 0]
@@ -308,14 +284,18 @@ def main():
     a_walk, _ = walker.predict(w_obs, deterministic=True)
     a_walk = torch.as_tensor(np.clip(a_walk, -1, 1), dtype=torch.float32,
                              device=device)
-    # safety value + fallback (tensor path)
+    # safety value + fallback (tensor path) via the library shield
     s_obs = snorm(obs_dict["proprioception"].float())
-    with torch.no_grad():
-      v = safety.policy.predict_values(s_obs).squeeze(-1)
-      a_safe = torch.clamp(safety.policy._predict(s_obs, deterministic=True),
-                           -1.0, 1.0)
     speed = torch.norm(robot.data.root_link_lin_vel_w[:, :2], dim=1)
-    engaged, caution = filt.update(v, speed, fresh=prev_done)
+    action, finfo = filt.act(a_walk, speed=speed, fresh=prev_done, s_obs=s_obs)
+    engaged, caution, v = finfo.engaged, finfo.caution, finfo.value
+    if args.no_filter:
+      filt.engaged.zero_()
+      filt.engaged_steps.zero_()
+      filt.caution_steps.zero_()
+      action = a_walk
+      engaged = torch.zeros_like(engaged)
+      caution = torch.zeros_like(caution)
     # caution band: zero the walker's COMMAND (walker-driven deceleration);
     # restored to cmd_vx otherwise. Written into the live command buffer so
     # both policies' command obs stay consistent with what the walker does.
@@ -328,7 +308,6 @@ def main():
       engaged, torch.ones_like(speed),
       torch.where(caution, torch.zeros_like(speed),
                   torch.full_like(speed, args.cmd_vx)))
-    action = torch.where(engaged.unsqueeze(-1), a_safe, a_walk)
     if hyb is not None:
       # certificate on the CURRENT obs (frozen normalizer baked into vhat)
       raw = obs_dict["proprioception"].float()
@@ -383,7 +362,7 @@ def main():
       ep_engaged &= ~d
       ep_steps[d] = 0
       ep_max_x[d] = 0
-      filt.engaged &= ~d
+      filt.reset(d)
       if hyb is not None:
         hyb["latch"] &= ~d
 
@@ -407,8 +386,8 @@ def main():
     crossing_rate=tot["crossings"] / ep,
     livelock_rate=(tot["timeouts_before_gap"]
                    + tot["censored_alive_before_gap"]) / ep,
-    intervention_rate=float(filt.overrides.sum() / (n * args.steps)),
-    caution_rate=float(filt.cautions.sum() / (n * args.steps)),
+    intervention_rate=filt.intervention_rate(args.steps),
+    caution_rate=float(filt.caution_steps.sum() / (n * args.steps)),
     hybrid_rate=(hyb_steps / (n * args.steps)) if hyb is not None else 0.0,
     gap_width=args.gap_width, n_gaps=args.n_gaps, eps=args.eps,
     filter="off" if args.no_filter else (os.path.basename(
