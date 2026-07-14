@@ -1,0 +1,127 @@
+"""Composable reach-avoid margin library (batched torch, mjlab scene API).
+
+A task's ``margin_fn(env) -> (g, l)`` is composed from these terms:
+
+    g (avoid)  : stay out of the failure set    — g < 0 == failure
+    l (reach)  : arrive in the target set       — l >= 0 == reached
+
+Conventions: margins are signed distances normalized to O(1); the g terminal
+anchor and clamping live in :mod:`base` / the buffers, not here. All terms are
+validated on the Go2 parkour tasks (ported from the reference wrappers).
+"""
+
+from __future__ import annotations
+
+import math
+
+import torch
+
+# Shared defaults (Go2-scale; override per task).
+MIN_CLEARANCE = 0.08
+HEIGHT_NORM = 0.25
+SIN_TILT_LIMIT = math.sin(math.radians(70.0))
+OBSTACLE_MARGIN = 0.12
+FOOTPRINT_RADIUS = 0.5
+CONTACT_FORCE_THRESHOLD = 10.0
+CENTRAL_RADIUS = 0.20
+SUPPORT_THRESHOLD = 0.45
+SUPPORT_NORM = 0.30
+CLAMP = 3.0
+
+
+# --- g terms -------------------------------------------------------------------
+
+def g_terrain_relative(env, scan_name="terrain_scan",
+                       nonfoot_name="nonfoot_ground_touch"):
+  """min(local-terrain base height, tilt, non-foot contact) — the standard
+  legged failure margin. Terrain-relative (raycast ground reference within the
+  footprint), so gaps/platform edges are handled correctly."""
+  robot = env.scene["robot"]
+  scan = env.scene[scan_name]
+  hit = scan.data.hit_pos_w
+  dist = scan.data.distances
+  base_z = robot.data.root_link_pos_w[:, 2]
+  base_xy = robot.data.root_link_pos_w[:, None, :2]
+  planar = torch.norm(hit[..., :2] - base_xy, dim=-1)
+  hit_z = hit[..., 2]
+  in_fp = (dist >= 0) & (planar <= FOOTPRINT_RADIUS)
+
+  below = in_fp & (hit_z < base_z[:, None] - OBSTACLE_MARGIN)
+  neg_inf = torch.full_like(hit_z, -1.0e9)
+  pos_inf = torch.full_like(hit_z, 1.0e9)
+  ground_ref = torch.where(below, hit_z, neg_inf).max(dim=1).values
+  lowest = torch.where(in_fp, hit_z, pos_inf).min(dim=1).values
+  lowest = torch.where(in_fp.any(dim=1), lowest, base_z)
+  ground_ref = torch.where(below.any(dim=1), ground_ref, lowest)
+  height = (base_z - ground_ref - MIN_CLEARANCE) / HEIGHT_NORM
+
+  grav_xy = torch.norm(robot.data.projected_gravity_b[:, :2], dim=1)
+  tilt = (SIN_TILT_LIMIT - grav_xy) / SIN_TILT_LIMIT
+
+  terms = [height, tilt]
+  try:
+    sensor = env.scene[nonfoot_name]
+    force = (sensor.data.force_history
+             if sensor.data.force_history is not None else sensor.data.force)
+    if force is not None:
+      mag = torch.norm(force, dim=-1)
+      while mag.dim() > 1:
+        mag = mag.amax(dim=-1)
+      terms.append((CONTACT_FORCE_THRESHOLD - mag) / CONTACT_FORCE_THRESHOLD)
+  except (KeyError, AttributeError):
+    pass
+  return torch.stack(terms, dim=-1).min(dim=-1).values
+
+
+# --- l terms -------------------------------------------------------------------
+
+def l_gap_foothold(env, scan_name="terrain_scan", patch_length=8.0,
+                   progress_weight=0.5):
+  """Foothold support under the body + forward progress (gap tasks: standing
+  on solid ground counts; over a gap the support vanishes -> l < 0)."""
+  robot = env.scene["robot"]
+  scan = env.scene[scan_name]
+  hit = scan.data.hit_pos_w
+  dist = scan.data.distances
+  base_z = robot.data.root_link_pos_w[:, 2]
+  base_xy = robot.data.root_link_pos_w[:, None, :2]
+  planar = torch.norm(hit[..., :2] - base_xy, dim=-1)
+  central = (dist >= 0) & (planar <= CENTRAL_RADIUS)
+  neg_inf = torch.full_like(hit[..., 2], -1.0e9)
+  ground_under = torch.where(central, hit[..., 2], neg_inf).max(dim=1).values
+  ground_under = torch.where(~central.any(dim=1), base_z - 5.0, ground_under)
+  foothold = (SUPPORT_THRESHOLD - (base_z - ground_under)) / SUPPORT_NORM
+  origin_x = env.scene.env_origins[:, 0]
+  progress = ((robot.data.root_link_pos_w[:, 0] - origin_x)
+              / patch_length).clamp(0.0, 1.5)
+  return foothold + progress_weight * progress
+
+
+def l_rest(env, v_rest=0.3, v_rest_norm=0.5, cross_bias_weight=0.3,
+           cross_bias_scale=3.0):
+  """Safe-stop target (deployment safety-filter objective): l >= 0 iff nearly
+  at rest, plus a mild bias for resting further along (cross when safe)."""
+  robot = env.scene["robot"]
+  speed = torch.norm(robot.data.root_link_lin_vel_w[:, :2], dim=1)
+  rest = (v_rest - speed) / v_rest_norm
+  origin_x = env.scene.env_origins[:, 0]
+  prog = ((robot.data.root_link_pos_w[:, 0] - origin_x)
+          / cross_bias_scale).clamp(0.0, 1.0)
+  return rest + cross_bias_weight * prog
+
+
+def l_zero(env):
+  """Avoid-only tasks: no reach target (l always 'unreached')."""
+  n = env.scene["robot"].data.root_link_pos_w.shape[0]
+  return torch.zeros(n, device=env.device)
+
+
+# --- composition ---------------------------------------------------------------
+
+def compose(g_fn, l_fn, clamp: float = CLAMP):
+  """margin_fn from a g term and an l term (clamped for value regression)."""
+  def margin_fn(env):
+    g = g_fn(env).clamp(-clamp, clamp)
+    l = l_fn(env).clamp(-clamp, clamp)
+    return g, l
+  return margin_fn

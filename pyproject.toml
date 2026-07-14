@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "safe-mjlab-zoo"
+version = "0.1.0"
+description = "mjlab safety-benchmark environments (reach-avoid / avoid-only, single-agent / adversarial) for safety_sb3"
+requires-python = ">=3.10"
+dependencies = [
+  "torch",
+  "numpy",
+  "gymnasium",
+  "stable_baselines3>=2.0",
+  # peer deps (install separately): mjlab, safety_sb3
+]
+
+[tool.setuptools.packages.find]
+include = ["safe_mjlab_zoo*"]

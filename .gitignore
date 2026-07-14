@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+runs_zoo*/
+runs_dense/
+wandb/
+logs/
+*.egg-info/
+.venv/
