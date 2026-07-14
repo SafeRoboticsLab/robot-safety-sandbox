@@ -94,22 +94,24 @@ class CrawlFilterTerrainCfg(SubTerrainCfg):
     # Beam at the clearance height (red; darker when impossible). Semi-
     # transparent so the robot is visible THROUGH the bar structure in videos
     # (a solid wall occludes it from every non-opening angle).
-    beam_rgba = (0.55, 0.05, 0.05, 0.65) if impossible else (0.85, 0.15, 0.15, 0.6)
+    # Beam kept moderately visible (it marks the bar HEIGHT); wall + pillars made
+    # nearly transparent (their only job is to rule out jumping / bound the sides,
+    # they should not hide the crawling robot in videos).
+    beam_rgba = (0.55, 0.05, 0.05, 0.45) if impossible else (0.85, 0.15, 0.15, 0.4)
     _add_box(body, geoms,
              pos=(x0 + BAR_DEPTH / 2, tw / 2, clearance + BEAM_THICKNESS / 2),
              size=(BAR_DEPTH / 2, tw / 2, BEAM_THICKNESS / 2), rgba=beam_rgba)
-    # Anti-jump wall above the beam (mostly transparent — its only job is to
-    # rule out jumping over, it should not hide the robot).
+    # Anti-jump wall above the beam (nearly transparent — should not hide robot).
     wall_z = clearance + BEAM_THICKNESS + WALL_HEIGHT / 2
     _add_box(body, geoms, pos=(x0 + BAR_DEPTH / 2, tw / 2, wall_z),
              size=(BAR_DEPTH / 2, tw / 2, WALL_HEIGHT / 2),
-             rgba=(0.35, 0.35, 0.4, 0.25))
+             rgba=(0.35, 0.35, 0.4, 0.10))
     # Side pillars (full height of beam+wall).
     pillar_h = clearance + BEAM_THICKNESS + WALL_HEIGHT
     for y in (PILLAR_WIDTH, tw - PILLAR_WIDTH):
       _add_box(body, geoms, pos=(x0 + BAR_DEPTH / 2, y, pillar_h / 2),
                size=(BAR_DEPTH / 2, PILLAR_WIDTH, pillar_h / 2),
-               rgba=(0.3, 0.3, 0.3, 0.25))  # semi-transparent so the side
+               rgba=(0.3, 0.3, 0.3, 0.10))  # near-transparent so the side
       # follow-camera (azimuth 90) sees the robot through the near pillar
 
     # Long rest zone (green-tinted).
