@@ -62,7 +62,7 @@ python path/to/safety-stable-baselines/tests/test_tensor_sac.py
 
 # end-to-end GPU training smoke (~1 min; warp JIT-compiles kernels for your
 # arch on the FIRST env build — expect a one-time pause):
-python examples/train.py --task hopper_safety --num-envs 256 --steps 500000 \
+python examples/train.py --task go2_stabilize --num-envs 256 --steps 500000 \
     --net 128,128,128 --ent-coef 0 --no-adaptive-lr --no-wandb
 ```
 
@@ -72,10 +72,10 @@ Trainers: `examples/train.py` (safety layer, safety_sb3 learners),
 
 ## Notes & known deviations
 
-- **Digit tasks** (`digit_stabilize*`) need the Digit asset from the
-  SafeRoboticsLab mjlab fork; on stock mjlab they are skipped with a warning
-  at import (everything else works). Vendoring the asset is tracked for a
-  future release.
+- **Digit tasks** (`digit_stabilize*`): assets and builders are vendored
+  in-repo (first-class). Cfg construction and import are stock-mjlab-clean;
+  SIMULATION currently needs the lab's mjlab fork for its ball-joint
+  entity patch (see envs/digit_safety/builders.py) until upstreamed.
 - **mjlab version**: the zoo targets the mjlab **1.2** API. Newer mjlab
   (1.3–1.5) has not been validated; known 1.1↔1.2 drift already required
   compat shims once, so keep the pin unless you are prepared to re-run the
@@ -85,7 +85,7 @@ Trainers: `examples/train.py` (safety layer, safety_sb3 learners),
   `AttributeError: ls_parallel was removed in MuJoCo Warp 3.9.1` at the first
   env build. The pinned triple above is the validated set.
 - **GPU memory**: per-task footprints scale with `--num-envs`; see the
-  task docstrings. The classic-control ports (hopper etc.) are tiny (<1 GB);
-  the Go2 tasks want 4–9 GB at 2–3k envs.
+  task docstrings. The Go2 tasks want 4–9 GB at 2–3k envs; the classic
+  Robust-Gymnasium ports (feat/robust-gym-mjlab branch) are tiny (<1 GB).
 - **Cross-arch**: no code changes needed between sm_89 and sm_120 — only the
   warp kernel cache differs (per-machine, auto-built).

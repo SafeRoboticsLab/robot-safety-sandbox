@@ -80,7 +80,7 @@ new-robot checklist (go2 and digit are the two reference layouts).
 
 ## Repo layout / status
 
-SELF-CONTAINED: env cfgs, terrains, robot assets (Go2, Digit, classic), and
+SELF-CONTAINED: env cfgs, terrains, robot assets (Go2, Digit), and
 the handover dataset are native under `robot_safety_sandbox/envs/` + `data/`.
 `safety_sb3` is a pinned pip dependency
 ([safety-stable-baselines](https://github.com/SafeRoboticsLab/safety-stable-baselines)

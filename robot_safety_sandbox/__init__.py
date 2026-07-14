@@ -15,8 +15,6 @@ from .tasks import go2_crawl as _go2_crawl
 from .tasks import go2_gap as _go2_gap
 from .tasks import go2_stabilize as _go2_stabilize
 from .tasks import go2_crawl_twins as _go2_crawl_twins
-from .tasks import classic_safety as _classic_safety
-from .nominal import classic_dense as _classic_dense
 from .nominal import go2_crawl_walker as _go2_crawl_walker
 from .nominal import go2_walker as _go2_walker
 
@@ -25,12 +23,10 @@ _go2_gap.register_all()
 _go2_crawl.register_all()
 _go2_stabilize.register_all()
 _digit_safety.register_all()
-_classic_safety.register_all()
 _go2_crawl_twins.register_all()
 # nominal task policies (dense reward + vanilla SB3) — what filters wrap
 _go2_walker.register_all()
 _go2_crawl_walker.register_all()
-_classic_dense.register_all()
 
 __all__ = [
   "MjlabTensorSafetyEnv", "MjlabNumpySafetyEnv", "build_task_cfg",
