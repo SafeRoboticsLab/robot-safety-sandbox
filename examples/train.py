@@ -35,8 +35,8 @@ import torch as th  # noqa: E402
 from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback  # noqa: E402
 
 from safety_sb3 import IsaacsPPO, ReachAvoidPPO, SafetyPPO  # noqa: E402
-from safe_mjlab_zoo import list_tasks, make_tensor, spec  # noqa: E402
-from safe_mjlab_zoo.callbacks import (  # noqa: E402
+from robot_safety_sandbox import list_tasks, make_tensor, spec  # noqa: E402
+from robot_safety_sandbox.callbacks import (  # noqa: E402
   ForceRampCallback,
   FwdForceAnnealCallback,
   GaitThreshRampCallback,
@@ -129,7 +129,7 @@ def main():
                  help="freeze obs-norm updates at the start of WARM-STARTED runs")
   p.add_argument("--device", default="cuda:0")
   p.add_argument("--out", default=os.path.join(_ZOO, "runs_zoo"))
-  p.add_argument("--wandb-project", default="safe_mjlab_zoo")
+  p.add_argument("--wandb-project", default="robot_safety_sandbox")
   p.add_argument("--no-wandb", action="store_true")
   args = p.parse_args()
 

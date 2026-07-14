@@ -3,9 +3,9 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "safe-mjlab-zoo"
+name = "robot-safety-sandbox"
 version = "0.1.0"
-description = "mjlab safety-benchmark environments (reach-avoid / avoid-only, single-agent / adversarial) for safety_sb3"
+description = "Parallelized mjlab environments for nominal-policy training, safety-policy synthesis, and safety-filter evaluation"
 requires-python = ">=3.10"
 dependencies = [
   "torch",
@@ -17,4 +17,4 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["safe_mjlab_zoo*"]
+include = ["robot_safety_sandbox*", "safe_mjlab_zoo"]  # second entry = deprecated alias shim

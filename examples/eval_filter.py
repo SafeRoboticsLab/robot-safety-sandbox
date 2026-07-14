@@ -51,8 +51,8 @@ from mjlab.managers.event_manager import EventTermCfg  # noqa: E402
 from mjlab.managers.scene_entity_config import SceneEntityCfg  # noqa: E402
 
 from safety_sb3 import ReachAvoidPPO, SafetyPPO  # noqa: E402
-from safe_mjlab_zoo import spec  # noqa: E402
-from safe_mjlab_zoo.filters import ValueShield  # noqa: E402
+from robot_safety_sandbox import spec  # noqa: E402
+from robot_safety_sandbox.filters import ValueShield  # noqa: E402
 
 CTRL_GAIN = 3.0        # bridge convention: policy action * gain -> env action
 # terrain geometry is task-dependent -> CLI args (--gap-x/--rest-x/--spawn-x):
@@ -132,7 +132,7 @@ def build_filter_env_cfg(task: str, num_envs: int, gap_width: float,
                                                 curriculum=False)
 
   # graft the walker's exact blind actor group as 'actor'
-  from safe_mjlab_zoo.envs.velocity.go2 import unitree_go2_flat_env_cfg
+  from robot_safety_sandbox.envs.velocity.go2 import unitree_go2_flat_env_cfg
   walk_cfg = unitree_go2_flat_env_cfg(play=True)
   walk_group = copy.deepcopy(walk_cfg.observations["actor"])
   assert "height_scan" not in walk_group.terms
@@ -181,7 +181,7 @@ def load_safety(zip_path: str, device: str):
 
 # --- filter ------------------------------------------------------------------
 # The latched eps-switch + caution band lives in the library now
-# (safe_mjlab_zoo.filters.ValueShield); this script wires the twin's value
+# (robot_safety_sandbox.filters.ValueShield); this script wires the twin's value
 # head and fallback policy into it and keeps the walker-command surgery
 # (caution -> zero command) at the call site, where the env lives.
 
@@ -239,7 +239,7 @@ def main():
   # funnel second stage: frozen skill + calibrated certificate (l_vhat)
   hyb = None
   if args.hybrid_skill:
-    from safe_mjlab_zoo.tasks.go2_gap import _load_vhat
+    from robot_safety_sandbox.tasks.go2_gap import _load_vhat
     hpol, hnorm = load_safety(
       os.path.join(args.hybrid_skill, "final_model.zip"), device)
     vmlp, vmean, vvar, p_star = _load_vhat(device)
@@ -322,7 +322,7 @@ def main():
       # (state-only certified-launch: airborne AND momentum AND V_hat_land),
       # NOT the funnel-era obs-feature certificate above (proven OOD at
       # handover states; kept only for logging).
-      from safe_mjlab_zoo.tasks.go2_gap import l_certified_launch
+      from robot_safety_sandbox.tasks.go2_gap import l_certified_launch
       l_v = l_certified_launch(env.unwrapped)
       # second-stage switch: fallback engaged AND certified -> frozen skill,
       # latched to episode end (the maneuver is committed; no mid-flight

@@ -32,8 +32,8 @@ from stable_baselines3 import PPO  # noqa: E402
 from stable_baselines3.common.callbacks import CheckpointCallback  # noqa: E402
 from stable_baselines3.common.vec_env import VecMonitor, VecNormalize  # noqa: E402
 
-from safe_mjlab_zoo import list_tasks, make_numpy, make_tensor, spec  # noqa: E402
-from safe_mjlab_zoo.callbacks import (  # noqa: E402
+from robot_safety_sandbox import list_tasks, make_numpy, make_tensor, spec  # noqa: E402
+from robot_safety_sandbox.callbacks import (  # noqa: E402
   DenseMetricsCallback, DenseVideoWandbCallback, VecNormSaveCallback)
 
 
@@ -47,7 +47,7 @@ def main():
   p.add_argument("--ent-coef", type=float, default=5e-3)
   p.add_argument("--device", default="cuda:0")
   p.add_argument("--out", default=os.path.join(_ZOO, "runs_dense"))
-  p.add_argument("--wandb-project", default="safe_mjlab_zoo")
+  p.add_argument("--wandb-project", default="robot_safety_sandbox")
   p.add_argument("--video-interval", type=int, default=10_000_000,
                  help="env-steps between wandb eval clips of the unaided gait")
   p.add_argument("--no-wandb", action="store_true")

@@ -1,11 +1,19 @@
-# safe_mjlab_zoo
+# Robot Safety Sandbox
+
+**Parallelized mjlab environments for nominal-policy training, safety-policy
+synthesis, and safety-filter evaluation.**
 
 Massively-parallel **mjlab** benchmark environments for **safety_sb3**
 (safety-stable-baselines): reach-avoid / avoid-only × single-agent /
-adversarial (ISAACS), on GPU end-to-end.
+adversarial (ISAACS), on GPU end-to-end — plus a `filters/` library with the
+three deployment styles (value shielding, R-CBF/Q-CBF projection,
+rollout shielding).
+
+> Renamed from `safe_mjlab_zoo` (a deprecated import alias remains for one
+> transition cycle).
 
 ```python
-from safe_mjlab_zoo import make_tensor, list_tasks
+from robot_safety_sandbox import make_tensor, list_tasks
 from safety_sb3 import ReachAvoidPPO
 
 env = make_tensor("go2_gap_chain", num_envs=2048)      # ~50k steps/s on 12 GB
@@ -66,7 +74,7 @@ the reward curve.
 ## Repo layout / status
 
 SELF-CONTAINED (phase-2 done): env cfgs, terrains, robot assets, and the
-handover dataset are native under `safe_mjlab_zoo/envs/` + `data/`. Deps:
+handover dataset are native under `robot_safety_sandbox/envs/` + `data/`. Deps:
 mjlab, safety_sb3, SB3, torch. See `PORTING.md` to add your task. This repo is
 intended to be consumed by safety-stable-baselines as a `benchmarks/`
 submodule for release.

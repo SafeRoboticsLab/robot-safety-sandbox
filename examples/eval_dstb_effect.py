@@ -35,7 +35,7 @@ import torch as th  # noqa: E402
 
 from safety_sb3 import IsaacsPPO  # noqa: E402
 from safety_sb3.tensor_env import TensorVecNormalize  # noqa: E402
-from safe_mjlab_zoo import make_tensor, spec  # noqa: E402
+from robot_safety_sandbox import make_tensor, spec  # noqa: E402
 
 
 def run_condition(env, norm, ctrl_policy, dstb_fn, n_episodes, ctrl_dim, device):

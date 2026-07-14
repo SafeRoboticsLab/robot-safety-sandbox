@@ -5,7 +5,7 @@ Two packages, one benchmark:
 | repo | provides | depends on |
 |---|---|---|
 | [`safety-stable-baselines`](https://github.com/SafeRoboticsLab/safety-stable-baselines) (`safety_sb3`) | the ALGORITHMS: SafetyPPO / ReachAvoidPPO / IsaacsPPO (+ SAC variants), tensor path, buffers | SB3, torch |
-| `safe-mjlab-zoo` (this repo) | the ENVIRONMENTS: task registry (safety + nominal layers), margins, bridges, trainers | mjlab, safety_sb3 |
+| `robot-safety-sandbox` (this repo) | the ENVIRONMENTS: task registry (safety + nominal layers), margins, bridges, trainers | mjlab, safety_sb3 |
 
 Neither depends on `unitree_rl_mjlab` (the legacy research repo) — the zoo is
 self-contained and this independence is CI-tested by installing on a clean
@@ -38,12 +38,12 @@ pip install "mjlab==1.2.0" "mujoco==3.6.0" "mujoco-warp==3.6.0" \
 # 3. this package. safety_sb3 is a declared pip dependency (pinned release
 #    tag from GitHub), so one editable install pulls both:
 pip install wandb tensorboard imageio moviepy
-pip install -e path/to/safe-mjlab-zoo
+pip install -e path/to/robot-safety-sandbox
 
 #    developing BOTH packages at once? install safety_sb3 editable FIRST and
 #    it satisfies the requirement:
 # pip install -e path/to/safety-stable-baselines
-# pip install -e path/to/safe-mjlab-zoo
+# pip install -e path/to/robot-safety-sandbox
 ```
 
 **Headless machines** (no display — clusters, ssh boxes): eval-video rendering
@@ -55,7 +55,7 @@ video interval with an OpenGL-context / `wandb.Video requires moviepy` error.
 
 ```bash
 # registry imports; Digit tasks warn-and-skip on stock mjlab (expected — see Notes)
-python -c "from safe_mjlab_zoo import list_tasks; print(list_tasks())"
+python -c "from robot_safety_sandbox import list_tasks; print(list_tasks())"
 
 # algorithm math (CPU, no GPU/simulator needed):
 python path/to/safety-stable-baselines/tests/test_tensor_sac.py

@@ -1,38 +1,24 @@
-"""safe_mjlab_zoo: mjlab safety-benchmark environments for safety_sb3.
+"""Deprecated alias: safe_mjlab_zoo was renamed to robot_safety_sandbox.
 
-    from safe_mjlab_zoo import make_tensor, list_tasks
-    env = make_tensor("go2_gap_chain", num_envs=2048)
-
-Tasks register lazily on import; phase-1 compat tasks additionally need their
-source repo on sys.path (see tasks/*.py + MIGRATION.md).
+Kept for one transition cycle so existing scripts, checkpoint-adjacent
+tooling, and the remote training clones keep working after a pull. Module
+identity is preserved for the top level (`sys.modules` alias), so
+``from safe_mjlab_zoo import spec, make_tensor`` etc. behave exactly like the
+new name. Deep imports (``import safe_mjlab_zoo.sub.mod``) re-execute the
+submodule under the alias name — prefer the new name for those.
 """
 
-from .base import MjlabNumpySafetyEnv, MjlabTensorSafetyEnv, build_task_cfg
-from .registry import TaskSpec, list_tasks, make_numpy, make_tensor, register, spec
+import sys
+import warnings
 
-from .tasks import digit_safety as _digit_safety
-from .tasks import go2_crawl as _go2_crawl
-from .tasks import go2_gap as _go2_gap
-from .tasks import go2_stabilize as _go2_stabilize
-from .tasks import go2_crawl_twins as _go2_crawl_twins
-from .tasks import classic_safety as _classic_safety
-from .nominal import classic_dense as _classic_dense
-from .nominal import go2_crawl_walker as _go2_crawl_walker
-from .nominal import go2_walker as _go2_walker
+import robot_safety_sandbox as _rss
 
-# safety tasks (margins + safety_sb3 learners)
-_go2_gap.register_all()
-_go2_crawl.register_all()
-_go2_stabilize.register_all()
-_digit_safety.register_all()
-_classic_safety.register_all()
-_go2_crawl_twins.register_all()
-# nominal task policies (dense reward + vanilla SB3) — what filters wrap
-_go2_walker.register_all()
-_go2_crawl_walker.register_all()
-_classic_dense.register_all()
+warnings.warn(
+  "safe_mjlab_zoo has been renamed to robot_safety_sandbox; "
+  "update imports (this alias will be removed in a future release).",
+  DeprecationWarning, stacklevel=2)
 
-__all__ = [
-  "MjlabTensorSafetyEnv", "MjlabNumpySafetyEnv", "build_task_cfg",
-  "TaskSpec", "register", "spec", "list_tasks", "make_tensor", "make_numpy",
-]
+sys.modules[__name__] = _rss
+for _name, _mod in list(sys.modules.items()):
+  if _name.startswith("robot_safety_sandbox."):
+    sys.modules["safe_mjlab_zoo." + _name[len("robot_safety_sandbox."):]] = _mod
