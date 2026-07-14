@@ -1,4 +1,4 @@
-# Porting your task into safe_mjlab_zoo + training with safety_sb3
+# Porting your task into robot_safety_sandbox + training with safety_sb3
 
 This is the guide for adding a new safety task (new robot, new obstacle, new
 objective) and training it.
@@ -90,7 +90,7 @@ register(TaskSpec(
   default_algo="ReachAvoidPPO", warmstart_from="myrobot_easier_stage",
   supports_adversary=True, description="..."))
 ```
-Import it in `safe_mjlab_zoo/__init__.py`. `warmstart_from` documents the
+Import it in `robot_safety_sandbox/__init__.py`. `warmstart_from` documents the
 pipeline lineage — staged warm-starts are how hard skills actually form.
 
 ## Step 4 — train

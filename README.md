@@ -71,10 +71,17 @@ the reward curve.
 3. `register(TaskSpec(...))` in `tasks/<your_task>.py`.
 4. Train with `examples/train.py --task <id>`; verify curricula CLIMB in wandb.
 
+## Extending
+
+`docs/EXTENDING.md` walks the four extension axes with worked examples from
+the shipped tasks: margin functions, sensors/observations, terrains
+(heightfields, walls, gaps, obstacles), and contacts — plus the
+new-robot checklist (go2 and digit are the two reference layouts).
+
 ## Repo layout / status
 
-SELF-CONTAINED (phase-2 done): env cfgs, terrains, robot assets, and the
-handover dataset are native under `robot_safety_sandbox/envs/` + `data/`. Deps:
-mjlab, safety_sb3, SB3, torch. See `PORTING.md` to add your task. This repo is
-intended to be consumed by safety-stable-baselines as a `benchmarks/`
-submodule for release.
+SELF-CONTAINED: env cfgs, terrains, robot assets (Go2, Digit, classic), and
+the handover dataset are native under `robot_safety_sandbox/envs/` + `data/`.
+`safety_sb3` is a pinned pip dependency
+([safety-stable-baselines](https://github.com/SafeRoboticsLab/safety-stable-baselines)
+v0.1.0); mjlab is a peer dep with its own pinned sim stack (INSTALL.md).
