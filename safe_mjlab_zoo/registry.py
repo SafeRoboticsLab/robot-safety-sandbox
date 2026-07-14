@@ -9,6 +9,13 @@ builder (spawn events + curricula), the reach-avoid margins, action dims, the
 recommended learner, and the warm-start lineage (curriculum pipelines like
 landing -> crossing -> chain are first-class here — they are how the hard
 skills were actually learned).
+
+Two task KINDS live side by side (a full filter experiment needs both):
+  kind="safety"   margins (g, l) + a safety learner (SafetyPPO / ReachAvoidPPO
+                  / IsaacsPPO) -> the certificate V(s) + fallback policy.
+  kind="nominal"  the TASK policy a filter wraps: dense env reward + VANILLA
+                  SB3 (margin_fn=None; envs are auto-built in dense mode).
+                  Registered under nominal/, trained with train_nominal.py.
 """
 
 from __future__ import annotations
@@ -23,14 +30,19 @@ _REGISTRY: dict[str, "TaskSpec"] = {}
 class TaskSpec:
   task_id: str
   cfg_builder: Callable          # (play: bool) -> ManagerBasedRlEnvCfg
-  margin_fn: Callable            # (env) -> (g, l)
+  margin_fn: Optional[Callable] = None  # (env) -> (g, l); None for nominal
   description: str = ""
   ctrl_dim: int = 12
   dstb_dim: int = 3              # adversary force dims (ISAACS)
-  default_algo: str = "SafetyPPO"   # SafetyPPO | ReachAvoidPPO | IsaacsPPO
+  default_algo: str = "SafetyPPO"   # SafetyPPO | ReachAvoidPPO | IsaacsPPO | PPO
   warmstart_from: Optional[str] = None  # previous pipeline stage task_id
   supports_adversary: bool = False
+  kind: str = "safety"           # "safety" (margins) | "nominal" (dense task)
   kwargs: dict = field(default_factory=dict)  # extra bridge kwargs
+
+  def __post_init__(self):
+    if self.kind == "safety" and self.margin_fn is None:
+      raise ValueError(f"safety task '{self.task_id}' needs a margin_fn")
 
 
 def register(spec: TaskSpec) -> None:
@@ -39,8 +51,9 @@ def register(spec: TaskSpec) -> None:
   _REGISTRY[spec.task_id] = spec
 
 
-def list_tasks() -> list[str]:
-  return sorted(_REGISTRY)
+def list_tasks(kind: Optional[str] = None) -> list[str]:
+  return sorted(t for t, s in _REGISTRY.items()
+                if kind is None or s.kind == kind)
 
 
 def spec(task_id: str) -> TaskSpec:
@@ -59,6 +72,7 @@ def make_tensor(task_id: str, num_envs: int = 2048, device: str = "cuda:0",
   s = spec(task_id)
   if adversary and not s.supports_adversary:
     raise ValueError(f"task '{task_id}' does not define an adversary")
+  kw.setdefault("dense_reward", s.kind == "nominal")  # nominal => dense
   return MjlabTensorSafetyEnv(
     num_envs, device, cfg_builder=s.cfg_builder, margin_fn=s.margin_fn,
     ctrl_dim=s.ctrl_dim, dstb_dim=s.dstb_dim, adversary=adversary,
@@ -72,6 +86,7 @@ def make_numpy(task_id: str, num_envs: int = 64, device: str = "cuda:0",
   s = spec(task_id)
   if adversary and not s.supports_adversary:
     raise ValueError(f"task '{task_id}' does not define an adversary")
+  kw.setdefault("dense_reward", s.kind == "nominal")  # nominal => dense
   return MjlabNumpySafetyEnv(
     num_envs, device, cfg_builder=s.cfg_builder, margin_fn=s.margin_fn,
     ctrl_dim=s.ctrl_dim, dstb_dim=s.dstb_dim, adversary=adversary,

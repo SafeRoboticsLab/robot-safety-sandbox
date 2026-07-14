@@ -38,8 +38,12 @@ from safety_sb3 import IsaacsPPO, ReachAvoidPPO, SafetyPPO  # noqa: E402
 from safe_mjlab_zoo import list_tasks, make_tensor, spec  # noqa: E402
 from safe_mjlab_zoo.callbacks import (  # noqa: E402
   ForceRampCallback,
+  FwdForceAnnealCallback,
+  GaitThreshRampCallback,
+  LAnnealCallback,
   PerEnvForceScaleCallback,
   NormFreezeCallback,
+  StdFloorCallback,
   TensorNormSaveCallback,
   VideoWandbCallback,
 )
@@ -54,13 +58,73 @@ def main():
   p.add_argument("--steps", type=int, default=200_000_000)
   p.add_argument("--seed", type=int, default=0)
   p.add_argument("--load", default=None, help="warm-start model .zip (previous stage)")
+  p.add_argument("--reset-log-std", type=float, default=None,
+                 help="on warm-start, re-inflate the action std to this value "
+                      "(escape a CONVERGED/collapsed source policy while keeping "
+                      "its learned features); leave unset to preserve the std")
+  p.add_argument("--max-std", type=float, default=None,
+                 help="RA-stable: hard cap on the action std (clamped after "
+                      "every update; prevents the organic std inflation that "
+                      "eroded motor skill in the synthesis runs)")
+  p.add_argument("--target-kl", type=float, default=None,
+                 help="RA-stable: SB3 target_kl early-stop for actor epochs")
   p.add_argument("--adversary", action="store_true")
   p.add_argument("--force-max", type=float, default=50.0)
+  # ISAACS game-balance knobs. The adversary force is SUSTAINED (every step),
+  # so calibrate force_max to the ctrl's physical envelope (a biped's static
+  # ankle authority caps sustained lateral force ~40N; go2-style 0.3x-bodyweight
+  # targets are quadruped-only). If force_scale pins at the floor, the game is
+  # frozen in an unwinnable state (zero gradient) -> lower force_max / floor.
+  p.add_argument("--force-ramp-frac", type=float, default=0.55,
+                 help="fraction of the run over which the global ramp reaches "
+                      "force-max")
+  p.add_argument("--force-floor", type=float, default=0.3,
+                 help="per-env survival-curriculum minimum force scale")
+  p.add_argument("--force-init", type=float, default=0.5,
+                 help="per-env survival-curriculum initial force scale")
+  p.add_argument("--fwd-force", type=float, default=15.0,
+                 help="crawl: start magnitude (N) of the forward-current force, "
+                      "annealed to 0 over the run")
   p.add_argument("--dstb-pretrain", type=int, default=20,
                  help="IsaacsPPO dstb-pretrain ROLLOUTS (keep << total rollouts)")
   p.add_argument("--lr", type=float, default=5e-4)
   p.add_argument("--ent-coef", type=float, default=1e-4)
-  p.add_argument("--video-interval", type=int, default=25_000_000)
+  # Safety-RL recipe knobs. Defaults keep the locomotion recipe (go2); for a
+  # SAFETY task match the proven rsl_rl config: --ent-coef 0 --no-adaptive-lr
+  # --net 128,128,128. The safety margin g(s) is smooth with tiny advantages, so
+  # (a) any positive entropy bonus makes log-std run away, and (b) the KL-adaptive
+  # LR death-spirals (can't improve -> LR crashes -> updates freeze). See
+  # digit_v3_flat_safety_ppo_runner_cfg in MjlabSafety_Digit/.../rl_cfg.py.
+  p.add_argument("--adaptive-lr", action=argparse.BooleanOptionalAction,
+                 default=True, help="KL-adaptive LR (locomotion); use "
+                 "--no-adaptive-lr for a fixed LR on safety tasks")
+  p.add_argument("--desired-kl", type=float, default=0.01,
+                 help="KL target for the adaptive LR. Tight values (0.01) can "
+                      "death-spiral the LR to 0 (frozen policy); loosen to "
+                      "0.02-0.03 to keep learning alive for exploration")
+  p.add_argument("--std-floor", type=float, default=None,
+                 help="floor the action std at this value (prevents premature "
+                      "std collapse -> more sustained exploration)")
+  p.add_argument("--std-ceil", type=float, default=None,
+                 help="ceiling the action std (prevents entropy-bonus log-std "
+                      "runaway -> aggressive thrashing / ep_len collapse)")
+  p.add_argument("--l-anneal-steps", type=int, default=0,
+                 help="reach-set curriculum: linearly contract the reach target "
+                      "l from LOOSE (~=g) to STRICT over this many steps (0=off, "
+                      "l stays strict). Use on WARM-STARTED reach-avoid to avoid "
+                      "the OOD collapse when a tight l yanks the policy off the "
+                      "avoid base")
+  p.add_argument("--l-hold-steps", type=int, default=20_000_000,
+                 help="hold l at LOOSE (alpha=0) this long before contracting, "
+                      "so a re-inflated warm-start policy re-settles on the base")
+  p.add_argument("--net", default="512,256,128",
+                 help="comma-separated hidden dims for pi & vf "
+                      "(safety: 128,128,128)")
+  p.add_argument("--vf-coef", type=float, default=0.5,
+                 help="value loss coefficient (rsl_rl safety uses 1.0)")
+  p.add_argument("--video-interval", type=int, default=5_000_000,
+                 help="env-steps between wandb eval videos (~2k rollouts at "
+                      "2560 envs); frequent clips make regressions visible early")
   p.add_argument("--norm-freeze-steps", type=int, default=5_000_000,
                  help="freeze obs-norm updates at the start of WARM-STARTED runs")
   p.add_argument("--device", default="cuda:0")
@@ -70,6 +134,10 @@ def main():
   args = p.parse_args()
 
   s = spec(args.task)
+  if s.kind != "safety":
+    raise SystemExit(
+      f"'{args.task}' is a {s.kind} task (dense reward, no margins) — train "
+      f"it with train_nominal.py; this trainer is for the safety layer.")
   tag = args.task + ("_adv" if args.adversary else "")
   outdir = os.path.join(args.out, tag)
   os.makedirs(outdir, exist_ok=True)
@@ -87,16 +155,21 @@ def main():
   else:
     Algo = ALGOS[s.default_algo if s.default_algo in ALGOS else "ReachAvoidPPO"]
 
+  net = [int(x) for x in args.net.split(",") if x.strip()]
   model = Algo(
     "MlpPolicy", env, **akw,
     n_steps=48, batch_size=args.num_envs * 48 // 4, n_epochs=5,
     gamma=0.99, gae_lambda=0.95, learning_rate=args.lr,
-    ent_coef=args.ent_coef, clip_range=0.2, max_grad_norm=1.0,
-    normalize_obs=True, adaptive_lr=True, desired_kl=0.01,
+    ent_coef=args.ent_coef, vf_coef=args.vf_coef, clip_range=0.2,
+    max_grad_norm=1.0, normalize_obs=True,
+    adaptive_lr=args.adaptive_lr,
+    desired_kl=args.desired_kl if args.adaptive_lr else None,
     policy_kwargs=dict(log_std_init=math.log(0.3),
-                       net_arch=dict(pi=[512, 256, 128], vf=[512, 256, 128])),
+                       net_arch=dict(pi=net, vf=net)),
     seed=args.seed, verbose=1, device=args.device,
     tensorboard_log=outdir)
+  print(f"[recipe] net={net} ent_coef={args.ent_coef} "
+        f"adaptive_lr={args.adaptive_lr} vf_coef={args.vf_coef} lr={args.lr}")
 
   cbs = [
     CheckpointCallback(save_freq=max(1, 25_000_000 // args.num_envs),
@@ -104,9 +177,48 @@ def main():
                        name_prefix="model"),
     TensorNormSaveCallback(os.path.join(outdir, "checkpoints")),
   ]
+  if args.std_floor is not None or args.std_ceil is not None:
+    cbs.append(StdFloorCallback(args.std_floor if args.std_floor is not None
+                                else 1e-6, args.std_ceil))
+  if args.l_anneal_steps > 0:
+    cbs.append(LAnnealCallback(anneal_steps=args.l_anneal_steps,
+                               hold_steps=args.l_hold_steps))
+    print(f"[curriculum] reach-set l-anneal: hold {args.l_hold_steps} then "
+          f"contract over {args.l_anneal_steps} steps")
 
+  # Crawl: anneal the forward-current force 15 N -> 0 (hold 40M, decay over 160M)
+  # so it bootstraps the gait then weans off -> final policy crawls unaided.
+  if "crawl" in args.task and not args.adversary:
+    cbs.append(FwdForceAnnealCallback(
+      start=args.fwd_force, hold_steps=int(0.13 * args.steps),
+      anneal_steps=int(0.54 * args.steps)))
+    cbs.append(GaitThreshRampCallback())  # trot-threshold curriculum
+
+  if args.target_kl is not None:
+    model.target_kl = args.target_kl
+    print(f"[ra-stable] target_kl={args.target_kl} (early-stop actor epochs)")
+  if args.max_std is not None:
+    import math as _math
+    import torch as _th
+    from stable_baselines3.common.callbacks import BaseCallback as _BC
+
+    class _StdCap(_BC):
+      def _on_rollout_start(self):
+        with _th.no_grad():
+          if hasattr(self.model.policy, "log_std"):
+            self.model.policy.log_std.clamp_(max=_math.log(args.max_std))
+      def _on_step(self):
+        return True
+
+    cbs.append(_StdCap())
+    print(f"[ra-stable] action std capped at {args.max_std}")
   if args.load:
     model.set_parameters(args.load, exact_match=False, device=args.device)
+    if args.reset_log_std is not None:
+      with th.no_grad():
+        model.policy.log_std.fill_(math.log(args.reset_log_std))
+      print(f"[warm-start] re-inflated action std -> {args.reset_log_std} "
+            f"(re-exploring around the loaded features)")
     tvn = model.env
     pt = args.load.replace("final_model.zip", "tensornormalize.pt")
     pkl = args.load.replace("final_model.zip", "vecnormalize.pkl")
@@ -127,8 +239,13 @@ def main():
     cbs.append(NormFreezeCallback(args.norm_freeze_steps))
 
   if args.adversary:
-    cbs.append(ForceRampCallback(args.force_max, int(0.55 * args.steps)))
-    cbs.append(PerEnvForceScaleCallback())
+    cbs.append(ForceRampCallback(args.force_max,
+                                 int(args.force_ramp_frac * args.steps)))
+    cbs.append(PerEnvForceScaleCallback(lo=args.force_floor,
+                                        init=args.force_init))
+    print(f"[adversary] force ramp 8->{args.force_max}N over "
+          f"{args.force_ramp_frac:.0%}; per-env scale floor={args.force_floor} "
+          f"init={args.force_init}")
 
   if not args.no_wandb:
     import wandb
@@ -136,9 +253,13 @@ def main():
     wandb.init(project=args.wandb_project, name=tag, config=vars(args),
                sync_tensorboard=True, save_code=False, reinit=True)
     cbs.append(WandbCallback(verbose=0))
+    # Use a "<task>_video" packed-terrain herd variant for the eval clip if one
+    # is registered (crawl spreads envs ~24 m -> a herd needs packed patches).
+    _vtask = args.task + "_video"
+    _vtask = _vtask if _vtask in list_tasks() else args.task
     cbs.append(VideoWandbCallback(
-      lambda: make_tensor(args.task, 2, args.device, adversary=False,
-                          render_mode="rgb_array"),
+      lambda: make_tensor(_vtask, 8, args.device, adversary=False,
+                          render_mode="rgb_array"),  # native herd, one scene
       interval=args.video_interval))
 
   model.learn(total_timesteps=args.steps, callback=CallbackList(cbs))
