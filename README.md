@@ -34,14 +34,12 @@ terrain — plain mjlab, algorithm-agnostic) + `margin_fn(env) -> (g, l)`
 | task | objective | learner | warm-starts from |
 |---|---|---|---|
 | `go2_stabilize` / `go2_locomote` | stand / track a command vs adversarial force (the original task; simplest zoo entry) | ReachAvoidPPO | — |
+| `digit_stabilize` | humanoid stand vs adversarial torso force (Digit analog of go2_stabilize) | ReachAvoidPPO | — |
 | `go2_gap_landing` | soft-land from mid-air over a gap | SafetyPPO | — |
 | `go2_gap_crossing` | reverse curriculum: landing → launch | SafetyPPO | landing |
 | `go2_gap_chain` | takeover momentum → safe rest (brake/jump) | ReachAvoidPPO | crossing |
 | `go2_gap_chain_isaacs` | chain + worst-case force adversary | IsaacsPPO | chain |
 | `go2_crawl` / `_isaacs` | duck under a low bar or stop | ReachAvoidPPO | — |
-| `digit_stand` | humanoid: don't fall (spawns span the boundary) | SafetyPPO | — |
-| `digit_stand_reach` | + reach the hardware-consistent standing stance | ReachAvoidPPO | digit_stand |
-| `digit_stand_isaacs` | + worst-case torso-force adversary | IsaacsPPO | digit_stand_reach |
 
 Task structure varies: `go2_stabilize` needs no curriculum or staging at all,
 while the gap family only forms its jump through staged warm-starts
