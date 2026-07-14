@@ -14,6 +14,18 @@ from ..registry import TaskSpec, register
 def register_all() -> None:
   from safe_mjlab_zoo.envs.velocity.go2 import unitree_go2_flat_env_cfg
 
+  from safe_mjlab_zoo.tasks.go2_gap import oracle03_env_cfg
+
+  register(TaskSpec(
+    task_id="go2_gap_dense_oracle", cfg_builder=oracle03_env_cfg,
+    kind="nominal", default_algo="PPO",
+    description="v8 EXISTENCE ORACLE (external directive §8): dense-reward "
+                "end-to-end policy on the oracle geometry (w=0.3, real "
+                "walk-in/roll-in spawns). Answers whether the architecture/"
+                "obs admit approach-to-landing control from these states "
+                "BEFORE the expensive RA synthesis. Gate: stable crossing "
+                ">= 0.8 from real roll-ins, no adversary."))
+
   register(TaskSpec(
     task_id="go2_walker_flat", cfg_builder=unitree_go2_flat_env_cfg,
     kind="nominal", default_algo="PPO",
