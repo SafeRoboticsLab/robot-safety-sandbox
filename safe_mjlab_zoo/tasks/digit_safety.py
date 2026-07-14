@@ -22,8 +22,9 @@ Digit specifics vs the go2 default: ``ctrl_dim=20`` (actuators); ``ctrl_gain=12`
 [-1, 1] action to ~+-0.75 rad of joint authority — go2's effective range); the
 adversary force is applied to the ``torso`` body.
 
-Phase-1 compat: the env cfg imports the Digit asset from the mjlab fork
-(``mjlab.tasks.velocity.config.digit_v3``); it is not yet vendored into the zoo.
+The Digit asset and env builders are vendored into the zoo
+(``envs/assets_digit`` + ``envs/digit_safety/builders.py``); no mjlab-fork
+dependency remains.
 """
 
 from __future__ import annotations

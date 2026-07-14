@@ -24,14 +24,7 @@ from .nominal import go2_walker as _go2_walker
 _go2_gap.register_all()
 _go2_crawl.register_all()
 _go2_stabilize.register_all()
-# Digit's asset still lives in the mjlab FORK (phase-1 compat; vendoring is a
-# release-packaging item) — a missing third-party asset must not take down the
-# whole zoo on stock mjlab.
-try:
-  _digit_safety.register_all()
-except ImportError as _e:
-  import warnings
-  warnings.warn(f"digit_safety tasks unavailable (asset not vendored): {_e}")
+_digit_safety.register_all()
 _classic_safety.register_all()
 _go2_crawl_twins.register_all()
 # nominal task policies (dense reward + vanilla SB3) — what filters wrap

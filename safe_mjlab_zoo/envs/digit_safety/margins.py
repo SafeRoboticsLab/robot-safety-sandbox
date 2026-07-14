@@ -30,7 +30,7 @@ import math
 
 import torch
 
-from mjlab.rl.safety_vecenv_wrapper import _FOOT_AND_KNEE_BODIES
+from safe_mjlab_zoo.envs.digit_safety.mdp import _FOOT_AND_KNEE_BODIES
 
 # --- g (avoid) thresholds + normalizers ---
 GROUND_CLEARANCE = 0.03   # non-foot/knee bodies must clear this (m)
