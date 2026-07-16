@@ -9,8 +9,7 @@ adversarial (ISAACS), on GPU end-to-end — plus a `filters/` library with the
 three deployment styles (value shielding, R-CBF/Q-CBF projection,
 rollout shielding).
 
-> Renamed from `safe_mjlab_zoo` (a deprecated import alias remains for one
-> transition cycle).
+> Renamed from `safe_mjlab_zoo`; the package is `robot_safety_sandbox`.
 
 ```python
 from robot_safety_sandbox import make_tensor, list_tasks

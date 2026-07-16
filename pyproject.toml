@@ -17,4 +17,4 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["robot_safety_sandbox*", "safe_mjlab_zoo"]  # second entry = deprecated alias shim
+include = ["robot_safety_sandbox*"]

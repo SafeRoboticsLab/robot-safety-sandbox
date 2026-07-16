@@ -2,6 +2,11 @@ __pycache__/
 *.pyc
 # --- training outputs: ONE root. Never create runs_<suffix> siblings. ---
 runs/
+# local-only dev assets (never published):
+# harvested datasets: loader degrades gracefully and honors $SAFE_ZOO_HANDOVER_DATASET
+data/
+# deprecated import alias shim - OUR migration crutch, not adopters'
+safe_mjlab_zoo/
 # legacy roots (pre-2026-07-16), kept so old local dirs stay ignored:
 runs_zoo*/
 runs_dense*/
