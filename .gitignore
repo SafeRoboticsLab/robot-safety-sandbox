@@ -1,7 +1,10 @@
 __pycache__/
 *.pyc
+# --- training outputs: ONE root. Never create runs_<suffix> siblings. ---
+runs/
+# legacy roots (pre-2026-07-16), kept so old local dirs stay ignored:
 runs_zoo*/
-runs_dense/
+runs_dense*/
 wandb/
 logs/
 *.egg-info/

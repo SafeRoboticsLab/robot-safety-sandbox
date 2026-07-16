@@ -10,7 +10,7 @@ nothing (a hopper standing still): the game lives in the margin statistics,
 not the behavior.
 
   python examples/eval_dstb_effect.py \
-      --ckpt runs_zoo/hopper_safety_adv/checkpoints/model_50003968_steps.zip \
+      --ckpt runs/hopper_safety_adv/checkpoints/model_50003968_steps.zip \
       --task hopper_safety --episodes 512
 """
 

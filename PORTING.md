@@ -99,7 +99,7 @@ pipeline lineage — staged warm-starts are how hard skills actually form.
 python examples/train.py --task myrobot_mytask --steps 200000000 --seed 0
 # next stage:
 python examples/train.py --task myrobot_harder --steps 2000000000 --seed 0 \
-    --load runs_zoo/myrobot_mytask/final_model.zip
+    --load runs/myrobot_mytask/final_model.zip
 ```
 
 Watch in wandb: `env/Curriculum/*` (THE progress gauge — a stalled curriculum

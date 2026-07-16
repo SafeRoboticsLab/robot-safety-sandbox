@@ -2,7 +2,7 @@
 
   python examples/train.py --task go2_gap_landing --steps 200000000 --seed 0
   python examples/train.py --task go2_gap_chain --steps 2000000000 --seed 0 \
-      --load runs_zoo/go2_gap_crossing/final_model.zip
+      --load runs/go2_gap_crossing/final_model.zip
 
 Everything a benchmark run needs is on by default: wandb (metrics + eval
 videos from step 0), periodic checkpoints (+ normalizer stats), curriculum
@@ -128,7 +128,9 @@ def main():
   p.add_argument("--norm-freeze-steps", type=int, default=5_000_000,
                  help="freeze obs-norm updates at the start of WARM-STARTED runs")
   p.add_argument("--device", default="cuda:0")
-  p.add_argument("--out", default=os.path.join(_ZOO, "runs_zoo"))
+  p.add_argument("--out", default=os.path.join(_ZOO, "runs"),
+                 help="output root; ALWAYS keep runs under runs/ (git-ignored) — "
+                      "never invent runs_<suffix> siblings, they escape .gitignore")
   p.add_argument("--wandb-project", default="robot_safety_sandbox")
   p.add_argument("--no-wandb", action="store_true")
   args = p.parse_args()

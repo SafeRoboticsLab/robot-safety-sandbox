@@ -15,8 +15,8 @@ changes (avoid-only vs reach-avoid completion). Predictions:
                 on uncrossable widths. Safe AND task flows.
 
   python examples/eval_filter.py \
-      --walker runs_dense/go2_walker_flat/final_model.zip \
-      --safety runs_zoo/go2_gap_chain_avoid/final_model.zip \
+      --walker runs/go2_walker_flat/final_model.zip \
+      --safety runs/go2_gap_chain_avoid/final_model.zip \
       --gap-width 0.35 --n-gaps 1 --num-envs 256 --steps 600
   # add --no-filter for the walker-only baseline
 """

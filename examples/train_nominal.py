@@ -46,7 +46,9 @@ def main():
   p.add_argument("--lr", type=float, default=3e-4)
   p.add_argument("--ent-coef", type=float, default=5e-3)
   p.add_argument("--device", default="cuda:0")
-  p.add_argument("--out", default=os.path.join(_ZOO, "runs_dense"))
+  p.add_argument("--out", default=os.path.join(_ZOO, "runs"),
+                 help="output root; ALWAYS keep runs under runs/ (git-ignored) — "
+                      "never invent runs_<suffix> siblings, they escape .gitignore")
   p.add_argument("--wandb-project", default="robot_safety_sandbox")
   p.add_argument("--video-interval", type=int, default=10_000_000,
                  help="env-steps between wandb eval clips of the unaided gait")
