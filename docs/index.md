@@ -9,6 +9,8 @@ plus a `filters/` library (value shielding, R-CBF/Q-CBF projection, rollout shie
 
 ## Start here
 
+- **[Environments](environments/index.md)** — the robot benchmark showreel (Go2 gap, crawl, Digit): task, margins, run-it snippet, figures.
+
 - **[Installation](installation.md)** — the pinned mjlab sim stack.
 - **[API guide](API.md)** — the `g`/`l` contract, `TaskSpec`, the registry, `end_criterion`.
 - **[Code reference](reference.md)** — auto-generated from source docstrings.

@@ -44,6 +44,8 @@ plugins:
             separate_signature: true
 
 markdown_extensions:
+  - attr_list
+  - md_in_html
   - admonition
   - pymdownx.superfences
   - pymdownx.details
@@ -55,6 +57,11 @@ nav:
   - Home: index.md
   - Installation: installation.md
   - API guide: API.md
+  - Environments:
+      - Overview: environments/index.md
+      - Go2 gap-jumping: environments/go2-gap.md
+      - Go2 crawl: environments/go2-crawl.md
+      - Digit stabilize: environments/digit.md
   - Code reference: reference.md
   - Extending: EXTENDING.md
   - Porting a task: porting.md
