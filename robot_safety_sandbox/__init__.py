@@ -8,7 +8,8 @@ source repo on sys.path (see tasks/*.py + MIGRATION.md).
 """
 
 from .base import MjlabNumpySafetyEnv, MjlabTensorSafetyEnv, build_task_cfg
-from .registry import TaskSpec, list_tasks, make_numpy, make_tensor, register, spec
+from .registry import (
+  TaskSpec, algo_name, list_tasks, make_numpy, make_tensor, register, spec)
 
 from .tasks import digit_safety as _digit_safety
 from .tasks import go2_crawl as _go2_crawl
@@ -31,4 +32,5 @@ _go2_crawl_walker.register_all()
 __all__ = [
   "MjlabTensorSafetyEnv", "MjlabNumpySafetyEnv", "build_task_cfg",
   "TaskSpec", "register", "spec", "list_tasks", "make_tensor", "make_numpy",
+  "algo_name",
 ]

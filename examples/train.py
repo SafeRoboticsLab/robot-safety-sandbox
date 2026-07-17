@@ -35,7 +35,7 @@ import torch as th  # noqa: E402
 from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback  # noqa: E402
 
 from safety_sb3 import IsaacsPPO, ReachAvoidPPO, SafetyPPO  # noqa: E402
-from robot_safety_sandbox import list_tasks, make_tensor, spec  # noqa: E402
+from robot_safety_sandbox import algo_name, list_tasks, make_tensor, spec  # noqa: E402
 from robot_safety_sandbox.callbacks import (  # noqa: E402
   ForceRampCallback,
   FwdForceAnnealCallback,
@@ -49,6 +49,20 @@ from robot_safety_sandbox.callbacks import (  # noqa: E402
 )
 
 ALGOS = {"SafetyPPO": SafetyPPO, "ReachAvoidPPO": ReachAvoidPPO}
+
+# The two-player learners need safety_sb3 >= v0.2.0, where the 2x2 (avoid /
+# reach-avoid) x (1P / 2P) is complete. v0.2.0 also RENAMED the two-player
+# reach-avoid game IsaacsPPO -> GameplayPPO and reused the name IsaacsPPO for
+# the two-player AVOID game (ISAACS eq. 7). So on v0.1.0 `IsaacsPPO` still
+# imports and still trains — as the WRONG problem. Gate on GameplayPPO's
+# presence (the v0.2.0 tell) rather than trusting the name.
+try:
+  from safety_sb3 import GameplayPPO  # noqa: E402
+
+  ALGOS["GameplayPPO"] = GameplayPPO
+  ALGOS["IsaacsPPO"] = IsaacsPPO
+except ImportError:
+  pass  # v0.1.0: leave both two-player learners UNAVAILABLE (fail closed)
 
 
 def main():
@@ -144,18 +158,30 @@ def main():
   outdir = os.path.join(args.out, tag)
   os.makedirs(outdir, exist_ok=True)
 
+  # Resolve the learner from the task's PROBLEM (avoid vs reach-avoid, set by
+  # its margins) x the RUN's player count (--adversary). algo_name() also
+  # refuses an avoid-only task on a reach-avoid learner, which has no valid
+  # formulation for any constant l (see margins.py).
+  algo = algo_name(args.task, adversary=args.adversary)
+  if algo not in ALGOS:
+    raise SystemExit(
+      f"'{args.task}'{' +--adversary' if args.adversary else ''} needs the "
+      f"'{algo}' learner, which this safety_sb3 does not export. The "
+      f"two-player learners require safety_sb3 >= v0.2.0 (pyproject still "
+      f"pins v0.1.0, where 'IsaacsPPO' silently means the reach-avoid game "
+      f"and there is no avoid game at all). Bump the pin before training this.")
+  print(f"[algo] {args.task} adversary={args.adversary} -> {algo}")
+
   env = make_tensor(args.task, args.num_envs, args.device, adversary=args.adversary)
+  Algo = ALGOS[algo]
   akw = {}
-  if args.adversary:
-    Algo = IsaacsPPO  # full two-player game, tensor path
+  if args.adversary:  # full two-player game, tensor path
     akw = dict(ctrl_action_dim=s.ctrl_dim,
                dstb_learning_rate=3e-4, dstb_ent_coef=2e-3,  # reference values
                dstb_pretrain_rollouts=args.dstb_pretrain,
                ctrl_rollouts_per_cycle=12, dstb_rollouts_per_cycle=3,
                use_leaderboard=True,
                leaderboard_dir=os.path.join(outdir, "leaderboard"))
-  else:
-    Algo = ALGOS[s.default_algo if s.default_algo in ALGOS else "ReachAvoidPPO"]
 
   net = [int(x) for x in args.net.split(",") if x.strip()]
   model = Algo(

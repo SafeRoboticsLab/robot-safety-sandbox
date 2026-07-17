@@ -33,9 +33,9 @@ except ImportError:
 
 import torch as th  # noqa: E402
 
-from safety_sb3 import IsaacsPPO  # noqa: E402
+import safety_sb3  # noqa: E402
 from safety_sb3.tensor_env import TensorVecNormalize  # noqa: E402
-from robot_safety_sandbox import make_tensor, spec  # noqa: E402
+from robot_safety_sandbox import algo_name, make_tensor, spec  # noqa: E402
 
 
 def run_condition(env, norm, ctrl_policy, dstb_fn, n_episodes, ctrl_dim, device):
@@ -83,9 +83,20 @@ def main():
   s = spec(args.task)
   ctrl_dim = s.ctrl_dim
   env = make_tensor(args.task, args.num_envs, args.device, adversary=True)
+  # The two-player learner for THIS task's problem: IsaacsPPO (avoid) or
+  # GameplayPPO (reach-avoid). Resolved rather than hardcoded — safety_sb3
+  # v0.2.0 reused the name IsaacsPPO for the avoid game and renamed the
+  # reach-avoid game to GameplayPPO, so a hardcoded IsaacsPPO.load would
+  # deserialize a reach-avoid checkpoint into the wrong class.
+  algo = algo_name(args.task, adversary=True)
+  Algo = getattr(safety_sb3, algo, None)
+  if Algo is None:
+    raise SystemExit(
+      f"'{args.task}' needs the '{algo}' learner, which this safety_sb3 does "
+      f"not export (two-player learners need safety_sb3 >= v0.2.0).")
   # custom_objects neutralizes machine-specific state baked into the
   # checkpoint (absolute leaderboard/tensorboard paths from the training box).
-  model = IsaacsPPO.load(args.ckpt, device=args.device, custom_objects={
+  model = Algo.load(args.ckpt, device=args.device, custom_objects={
     "_use_lb": False, "_lb_dir": "/tmp/isaacs_lb_probe",
     "tensorboard_log": None})
   # obs normalizer (tensornorm saved next to checkpoints)

@@ -11,8 +11,22 @@ landing -> crossing -> chain are first-class here — they are how the hard
 skills were actually learned).
 
 Two task KINDS live side by side (a full filter experiment needs both):
-  kind="safety"   margins (g, l) + a safety learner (SafetyPPO / ReachAvoidPPO
-                  / IsaacsPPO) -> the certificate V(s) + fallback policy.
+  kind="safety"   margins (g, l) + a safety learner -> the certificate V(s) +
+                  fallback policy. FOUR learners, one per (problem, players)
+                  cell — the problem is a property of the TASK's margins, the
+                  player count is a property of the RUN (``--adversary``):
+
+                                   avoid (no l)      reach-avoid (real l)
+                    single-player  SafetyPPO         ReachAvoidPPO
+                    two-player     IsaacsPPO         GameplayPPO
+
+                  ``default_algo`` picks the COLUMN (its problem is the task's
+                  problem); :func:`algo_name` picks the row from the run's
+                  ``adversary`` flag and returns the cell.
+                  NB ``IsaacsPPO``/``IsaacsSAC`` CHANGED MEANING in safety_sb3
+                  v0.2.0: they are now the two-player AVOID game (ISAACS eq. 7,
+                  no target set); the two-player reach-avoid learner they used
+                  to be is now ``GameplayPPO``/``GameplaySAC``.
   kind="nominal"  the TASK policy a filter wraps: dense env reward + VANILLA
                   SB3 (margin_fn=None; envs are auto-built in dense mode).
                   Registered under nominal/, trained with train_nominal.py.
@@ -34,7 +48,10 @@ class TaskSpec:
   description: str = ""
   ctrl_dim: int = 12
   dstb_dim: int = 3              # adversary force dims (ISAACS)
-  default_algo: str = "SafetyPPO"   # SafetyPPO | ReachAvoidPPO | IsaacsPPO | PPO
+  # Declares the task's PROBLEM via a learner name; algo_name() swaps in the
+  # two-player learner of the same problem when a run passes adversary=True.
+  # SafetyPPO | ReachAvoidPPO | IsaacsPPO | GameplayPPO | PPO (nominal).
+  default_algo: str = "SafetyPPO"
   warmstart_from: Optional[str] = None  # previous pipeline stage task_id
   supports_adversary: bool = False
   kind: str = "safety"           # "safety" (margins) | "nominal" (dense task)
@@ -63,6 +80,60 @@ def spec(task_id: str) -> TaskSpec:
       "(Some tasks require their source repo on sys.path during the "
       "phase-1 compat period — see tasks/*.py and MIGRATION.md.)")
   return _REGISTRY[task_id]
+
+
+AVOID = "avoid"
+REACH_AVOID = "reach-avoid"
+
+#: which PROBLEM (backup) each learner solves — ``default_algo`` names one of
+#: these, and that is what fixes the task's problem; the player count comes from
+#: the run. Mirrors safety_sb3.backups: avoid anchors on g, reach-avoid on
+#: min(l, g).
+_ALGO_PROBLEM = {
+  "SafetyPPO": AVOID,           "IsaacsPPO": AVOID,          # ISAACS eq. 7
+  "ReachAvoidPPO": REACH_AVOID, "GameplayPPO": REACH_AVOID,  # Gameplay eq. 6a
+}
+#: (problem, n_players) -> learner
+_LEARNER = {
+  (AVOID, 1): "SafetyPPO",       (AVOID, 2): "IsaacsPPO",
+  (REACH_AVOID, 1): "ReachAvoidPPO", (REACH_AVOID, 2): "GameplayPPO",
+}
+
+
+def algo_name(task_id: str, adversary: bool = False) -> str:
+  """The learner CLASS NAME for running ``task_id`` (names only — this module
+  never imports safety_sb3, so the registry stays importable without it).
+
+  The task's margins fix the PROBLEM (avoid vs reach-avoid); ``adversary`` fixes
+  the PLAYER COUNT. Resolving both together is what keeps the 2x2 honest — the
+  old code hardcoded IsaacsPPO for every adversarial run, which since safety_sb3
+  v0.2.0 (where that name means the AVOID game) would silently turn every
+  reach-avoid task into an avoid game.
+
+  Also refuses the one pairing that is silently wrong: a reach-avoid learner on
+  an avoid-only task (no target set). Pinning l to a constant does NOT make the
+  reach-avoid backup compute the avoid value — a negative l empties the safe
+  set, a non-negative one strips the lookahead — so it has no valid formulation
+  and must not be reachable by accident. See margins.py.
+  """
+  s = spec(task_id)
+  if s.default_algo not in _ALGO_PROBLEM:
+    raise ValueError(
+      f"task '{task_id}' declares default_algo='{s.default_algo}', which is "
+      f"not a safety learner; known: {sorted(_ALGO_PROBLEM)}")
+  if adversary and not s.supports_adversary:
+    raise ValueError(f"task '{task_id}' does not define an adversary")
+  problem = _ALGO_PROBLEM[s.default_algo]
+  # margin_fns built by margins.compose/avoid_only carry has_target; anything
+  # else (task-local margin builders) is assumed to declare a real l.
+  if problem == REACH_AVOID and not getattr(s.margin_fn, "has_target", True):
+    raise ValueError(
+      f"task '{task_id}' is AVOID-ONLY (its margin_fn declares no target set) "
+      f"but declares the reach-avoid learner '{s.default_algo}'. Avoid is not "
+      f"a reach-avoid instance for ANY constant l — declare SafetyPPO (avoid; "
+      f"--adversary then gives the two-player IsaacsPPO), or give the task a "
+      f"real reach margin l. See margins.py / safety_sb3 RELEASE_NOTES v0.2.0.")
+  return _LEARNER[(problem, 2 if adversary else 1)]
 
 
 def make_tensor(task_id: str, num_envs: int = 2048, device: str = "cuda:0",
