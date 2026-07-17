@@ -78,11 +78,17 @@ def main():
   p.add_argument("--num-envs", type=int, default=256)
   p.add_argument("--episodes", type=int, default=512)
   p.add_argument("--device", default="cuda:0")
+  p.add_argument("--end-criterion",
+                 choices=["failure", "reach-avoid", "timeout"], default=None,
+                 help="WHEN the episode ends from (g,l); default = the task's "
+                      "TaskSpec value. Match whatever the checkpoint trained "
+                      "with. (terminal_type is restored from the loaded model.)")
   args = p.parse_args()
 
   s = spec(args.task)
   ctrl_dim = s.ctrl_dim
-  env = make_tensor(args.task, args.num_envs, args.device, adversary=True)
+  env = make_tensor(args.task, args.num_envs, args.device, adversary=True,
+                    end_criterion=args.end_criterion)
   # The two-player learner for THIS task's problem: IsaacsPPO (avoid) or
   # GameplayPPO (reach-avoid). Resolved rather than hardcoded — safety_sb3
   # v0.2.0 reused the name IsaacsPPO for the avoid game and renamed the

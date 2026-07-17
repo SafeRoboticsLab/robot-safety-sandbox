@@ -34,6 +34,7 @@ from gymnasium import spaces
 
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.managers.termination_manager import TerminationTermCfg
 
 # The tensor bridge pairs with safety_sb3 learners; the NUMPY bridge (nominal
 # task policies, vanilla SB3) must work without safety_sb3 installed.
@@ -46,13 +47,54 @@ except ImportError:  # nominal-only install: tensor path disabled
 
 TERMINAL_MARGIN = -0.1  # g anchor on failure terminations (pre-reset hook)
 
+#: name of the uniform success DoneTerm added by end_criterion="reach-avoid"
+SUCCESS_TERM = "zoo_reach_success"
+
+
+def _cached_margins(env, margin_fn):
+  """(g, l) for THIS step. mjlab computes terminations (line 148 of
+  ManagerBasedRlEnv.step) BEFORE rewards (line 152), both after the single
+  ``common_step_counter`` bump — so the reach-avoid success DoneTerm runs first
+  and stashes the margins it computed under a step token; the reward hook then
+  reuses them instead of calling the (geometry) margin_fn a second time. The
+  token guards against reading a stale cache when no DoneTerm ran this step
+  (failure/timeout mode), in which case we compute fresh — identical result,
+  since margin_fn is a pure function of the (unchanged between 148 and 152)
+  scene state."""
+  cache = getattr(env, "_zoo_gl_cache", None)
+  if cache is not None and cache[2] == env.common_step_counter:
+    return cache[0], cache[1]
+  g, l = margin_fn(env)
+  env._zoo_gl_cache = (g, l, env.common_step_counter)
+  return g, l
+
+
+def zoo_reach_success(env, margin_fn=None) -> torch.Tensor:
+  """Uniform reach-avoid success termination (added ONLY when the env's
+  end_criterion is "reach-avoid"): fire when the target is reached while safe,
+  i.e. g >= 0 AND l >= 0. Registered as a mjlab DoneTerm (non-time_out) so
+  mjlab's internal auto-reset fires on the SAME step the target is reached —
+  a bridge-side augmentation of ``terminated`` would reset one step late
+  (mjlab already auto-reset during self.mj.step) and desync the rollout buffer.
+  Computes (and caches) the margins here so the later reward hook need not
+  recompute them (see :func:`_cached_margins`)."""
+  g, l = _cached_margins(env, margin_fn)
+  return (g >= 0.0) & (l >= 0.0)
+
 
 def safety_margin_hook(env, margin_fn=None) -> torch.Tensor:
   """Reward-term hook: computes (g, l) BEFORE mjlab's auto-reset (terminal-
   correct) and stashes them in ``env.extras``. g is anchored to the terminal
   failure value on real terminations."""
-  g, l = margin_fn(env)
+  g, l = _cached_margins(env, margin_fn)
   failed = env.termination_manager.terminated
+  # A reach-avoid SUCCESS is a terminated step too (its DoneTerm sets terminated),
+  # but it must NOT be anchored to the failure value: its terminal reach-avoid
+  # target min(l, g) is >= 0 (a win), and clamping g to -0.1 would flip it to a
+  # loss. Exclude it. In failure/timeout mode the term is absent, so this is a
+  # no-op and the anchor is bit-identical to before.
+  if SUCCESS_TERM in env.termination_manager.active_terms:
+    failed = failed & ~env.termination_manager.get_term(SUCCESS_TERM)
   g = torch.where(failed, torch.minimum(g, torch.full_like(g, TERMINAL_MARGIN)), g)
   # NaN SANITATION: a physics NaN makes margins NaN in the SAME step the
   # nan_detection termination fires; the reset happens after the reward is
@@ -68,13 +110,29 @@ def safety_margin_hook(env, margin_fn=None) -> torch.Tensor:
 
 def build_task_cfg(cfg_builder: Callable, margin_fn: Callable, num_envs: int,
                    drop_events: tuple[str, ...] = ("push_robot",),
-                   dense: bool = False):
+                   dense: bool = False, end_criterion: str = "failure"):
   """Assemble an mjlab cfg for the zoo: task cfg + the margin hook.
 
   ``drop_events`` removes events a learned adversary replaces (default: the
   random push). ``dense=True`` is the STAGE-1 locomotion mode: the reward stays
   the env's own dense reward stack (`_r`) and the safety hook is NOT added, so a
-  stock PPO shapes a proper gait (reach-avoid g/l are not used here)."""
+  stock PPO shapes a proper gait (reach-avoid g/l are not used here).
+
+  ``end_criterion`` (see :data:`registry.END_CRITERIA`) sets WHEN episodes end,
+  UNIFORMLY across tasks. The task cfg's own terminations already encode the
+  FAILURE set (fell_over / illegal_contact / ... -> the reward hook anchors g<0
+  there) plus the env timeout, so:
+    * "failure"     : add nothing. The task's existing terminations stand as-is
+                      -> bit-identical to pre-end_criterion behavior. Reaching
+                      the target does not end the episode; the agent reaches
+                      deeper (l keeps climbing to the g ceiling).
+    * "reach-avoid" : ALSO add the uniform success DoneTerm (g>=0 AND l>=0) on
+                      top of the failure terminations -> reach-and-stop.
+    * "timeout"     : strip every non-time_out (failure) termination so ONLY the
+                      env timeout ends episodes, and add no success term (pure
+                      value-learning / diagnostic). g is still anchored nowhere,
+                      so failures live on in the margin, they just don't reset.
+  """
   cfg = cfg_builder(play=False)
   cfg.scene.num_envs = int(num_envs)
   if cfg.events is not None:
@@ -87,6 +145,15 @@ def build_task_cfg(cfg_builder: Callable, margin_fn: Callable, num_envs: int,
         "train on the dense env reward — use train_nominal.py / dense mode.")
     cfg.rewards["zoo_safety_hook"] = RewardTermCfg(
       func=safety_margin_hook, weight=1.0, params={"margin_fn": margin_fn})
+    if end_criterion == "reach-avoid":
+      cfg.terminations[SUCCESS_TERM] = TerminationTermCfg(
+        func=zoo_reach_success, params={"margin_fn": margin_fn})
+    elif end_criterion == "timeout":
+      # Keep only the env timeout (time_out=True); drop the failure set so the
+      # episode always runs to the horizon (diagnostic / pure value-learning).
+      for name in [n for n, t in cfg.terminations.items()
+                   if not getattr(t, "time_out", False)]:
+        cfg.terminations.pop(name)
   return cfg
 
 
@@ -97,8 +164,9 @@ class _MjlabCore:
                  ctrl_dim, dstb_dim, ctrl_gain, force_max, adversary,
                  adversary_body, render_mode, obs_key=None, dense_reward=False,
                  dstb_mode="wrench", dstb_gain=0.25, hybrid_skill=None,
-                 latch_margin_fn=None):
+                 latch_margin_fn=None, end_criterion="failure"):
     self.obs_key = obs_key  # resolved after first reset (auto-detect)
+    self.end_criterion = str(end_criterion)
     self.ctrl_dim = int(ctrl_dim)
     self.dstb_dim = int(dstb_dim)
     self.ctrl_gain = float(ctrl_gain)
@@ -113,7 +181,8 @@ class _MjlabCore:
     self.dense_reward = bool(dense_reward)  # Stage-1: train on the env reward
     self.render_mode = render_mode
     self.mj = ManagerBasedRlEnv(
-      cfg=build_task_cfg(cfg_builder, margin_fn, num_envs, dense=dense_reward),
+      cfg=build_task_cfg(cfg_builder, margin_fn, num_envs, dense=dense_reward,
+                         end_criterion=self.end_criterion),
       device=device, render_mode="rgb_array" if render_mode else None)
     self._robot = self.mj.scene["robot"]
     if self.dstb_mode == "wrench":
@@ -259,7 +328,7 @@ class MjlabTensorSafetyEnv(_MjlabCore, TensorVecEnv):
                force_max=50.0, adversary=False, adversary_body="base_link",
                render_mode=None, obs_key=None, dense_reward=False,
                dstb_mode="wrench", dstb_gain=0.25, hybrid_skill=None,
-                 latch_margin_fn=None):
+                 latch_margin_fn=None, end_criterion="failure"):
     if not _HAS_SAFETY_SB3:
       raise ImportError(
         "safety_sb3 is required for the tensor bridge (pip install it or put "
@@ -271,7 +340,7 @@ class MjlabTensorSafetyEnv(_MjlabCore, TensorVecEnv):
       adversary=adversary, adversary_body=adversary_body,
       render_mode=render_mode, obs_key=obs_key, dense_reward=dense_reward,
       dstb_mode=dstb_mode, dstb_gain=dstb_gain, hybrid_skill=hybrid_skill,
-      latch_margin_fn=latch_margin_fn)
+      latch_margin_fn=latch_margin_fn, end_criterion=end_criterion)
     TensorVecEnv.__init__(self, int(num_envs), obs_space, act_space, device)
 
   def reset(self) -> torch.Tensor:
@@ -304,14 +373,15 @@ class MjlabNumpySafetyEnv(_MjlabCore, VecEnv):
                ctrl_dim=12, dstb_dim=3, ctrl_gain=3.0, force_max=50.0,
                adversary=False, adversary_body="base_link", render_mode=None,
                obs_key=None, dense_reward=False, dstb_mode="wrench",
-               dstb_gain=0.25, hybrid_skill=None, latch_margin_fn=None):
+               dstb_gain=0.25, hybrid_skill=None, latch_margin_fn=None,
+               end_criterion="failure"):
     obs_space, act_space = self._init_core(
       num_envs, device, cfg_builder, margin_fn, ctrl_dim=ctrl_dim,
       dstb_dim=dstb_dim, ctrl_gain=ctrl_gain, force_max=force_max,
       adversary=adversary, adversary_body=adversary_body,
       render_mode=render_mode, obs_key=obs_key, dense_reward=dense_reward,
       dstb_mode=dstb_mode, dstb_gain=dstb_gain, hybrid_skill=hybrid_skill,
-      latch_margin_fn=latch_margin_fn)
+      latch_margin_fn=latch_margin_fn, end_criterion=end_criterion)
     self._device = device
     VecEnv.__init__(self, int(num_envs), obs_space, act_space)
     self._actions = None

@@ -82,6 +82,21 @@ def main():
                       "eroded motor skill in the synthesis runs)")
   p.add_argument("--target-kl", type=float, default=None,
                  help="RA-stable: SB3 target_kl early-stop for actor epochs")
+  # The two orthogonal reach-avoid termination knobs (see registry.END_CRITERIA
+  # and safety_sb3 backups.TERMINAL_TYPES). terminal_type is ALGORITHM-side (how
+  # a terminal step is VALUED); end_criterion is ENV-side (WHEN the episode ends
+  # from g, l). The pairing the campaign wants — reach-DEEPER — is the default
+  # terminal_type="all" with end_criterion="failure".
+  p.add_argument("--terminal-type", choices=["all", "g"], default="all",
+                 help="reach-avoid learners only: value a terminal step as "
+                      "min(l,g) ('all', default) or g ('g'). Ignored (with a "
+                      "notice) on avoid tasks — SafetyPPO/IsaacsPPO have no l.")
+  p.add_argument("--end-criterion", choices=["failure", "reach-avoid", "timeout"],
+                 default=None,
+                 help="WHEN the episode ends from (g,l); default = the task's "
+                      "TaskSpec value. 'failure' (all tasks today): failure set "
+                      "+ timeout, never on reach. 'reach-avoid': also end on "
+                      "success (g>=0 & l>=0). 'timeout': only the env timeout.")
   p.add_argument("--adversary", action="store_true")
   p.add_argument("--force-max", type=float, default=50.0)
   # ISAACS game-balance knobs. The adversary force is SUSTAINED (every step),
@@ -172,16 +187,29 @@ def main():
       f"and there is no avoid game at all). Bump the pin before training this.")
   print(f"[algo] {args.task} adversary={args.adversary} -> {algo}")
 
-  env = make_tensor(args.task, args.num_envs, args.device, adversary=args.adversary)
+  env = make_tensor(args.task, args.num_envs, args.device,
+                    adversary=args.adversary, end_criterion=args.end_criterion)
+  eff_ec = args.end_criterion if args.end_criterion is not None else s.end_criterion
+  print(f"[end-criterion] {args.task} -> {eff_ec}"
+        f"{' (override)' if args.end_criterion is not None else ' (task default)'}")
   Algo = ALGOS[algo]
   akw = {}
+  # terminal_type is a REACH-AVOID learner knob only; passing it to an avoid
+  # learner (SafetyPPO/IsaacsPPO) would be a TypeError, and it is meaningless
+  # there anyway (no l). Pass it only when the resolved algo is reach-avoid.
+  if algo in ("ReachAvoidPPO", "GameplayPPO"):
+    akw["terminal_type"] = args.terminal_type
+    print(f"[terminal-type] {algo} -> {args.terminal_type}")
+  elif args.terminal_type != "all":
+    print(f"[terminal-type] ignored: {algo} is an avoid learner (no target "
+          f"set), so --terminal-type {args.terminal_type} has no effect.")
   if args.adversary:  # full two-player game, tensor path
-    akw = dict(ctrl_action_dim=s.ctrl_dim,
+    akw.update(dict(ctrl_action_dim=s.ctrl_dim,
                dstb_learning_rate=3e-4, dstb_ent_coef=2e-3,  # reference values
                dstb_pretrain_rollouts=args.dstb_pretrain,
                ctrl_rollouts_per_cycle=12, dstb_rollouts_per_cycle=3,
                use_leaderboard=True,
-               leaderboard_dir=os.path.join(outdir, "leaderboard"))
+               leaderboard_dir=os.path.join(outdir, "leaderboard")))
 
   net = [int(x) for x in args.net.split(",") if x.strip()]
   model = Algo(
@@ -287,7 +315,8 @@ def main():
     _vtask = _vtask if _vtask in list_tasks() else args.task
     cbs.append(VideoWandbCallback(
       lambda: make_tensor(_vtask, 8, args.device, adversary=False,
-                          render_mode="rgb_array"),  # native herd, one scene
+                          render_mode="rgb_array",  # native herd, one scene
+                          end_criterion=args.end_criterion),
       interval=args.video_interval))
 
   model.learn(total_timesteps=args.steps, callback=CallbackList(cbs))

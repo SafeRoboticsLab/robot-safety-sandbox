@@ -39,6 +39,19 @@ from typing import Callable, Optional
 
 _REGISTRY: dict[str, "TaskSpec"] = {}
 
+#: WHEN an episode ends, in terms of the task's (g, l) margins (g>=0 safe,
+#: l>=0 in-target). The ENV-side companion to the learner's ``terminal_type``
+#: (safety_sb3, how a terminal step is VALUED); the two are orthogonal — every
+#: pairing is valid. See :func:`base.build_task_cfg` for the mechanism.
+#:   "failure"     terminate on the env's failure set (g<0) + its timeout;
+#:                 NEVER on reach -> the agent keeps going after reaching and
+#:                 learns to reach DEEPER (default; reproduces today's behavior,
+#:                 where every task already terminates on physical failure only).
+#:   "reach-avoid" also terminate on success (g>=0 AND l>=0) -> reach-and-stop.
+#:   "timeout"     neither failure nor success ends it, only the env timeout
+#:                 (diagnostic / pure value-learning).
+END_CRITERIA = ("failure", "reach-avoid", "timeout")
+
 
 @dataclass
 class TaskSpec:
@@ -55,11 +68,21 @@ class TaskSpec:
   warmstart_from: Optional[str] = None  # previous pipeline stage task_id
   supports_adversary: bool = False
   kind: str = "safety"           # "safety" (margins) | "nominal" (dense task)
+  # WHEN the episode ends from (g, l); one of END_CRITERIA. "failure" (default)
+  # reproduces today's behavior for EVERY registered task — an audit (2026-07-17)
+  # found none currently terminate on success. A run may override it via the
+  # trainer's --end-criterion flag; the two knobs (this + terminal_type) are
+  # orthogonal. Set "reach-avoid" on a task only if it should end on reach.
+  end_criterion: str = "failure"
   kwargs: dict = field(default_factory=dict)  # extra bridge kwargs
 
   def __post_init__(self):
     if self.kind == "safety" and self.margin_fn is None:
       raise ValueError(f"safety task '{self.task_id}' needs a margin_fn")
+    if self.end_criterion not in END_CRITERIA:
+      raise ValueError(
+        f"task '{self.task_id}' has end_criterion={self.end_criterion!r}; "
+        f"must be one of {END_CRITERIA}")
 
 
 def register(spec: TaskSpec) -> None:
@@ -137,28 +160,40 @@ def algo_name(task_id: str, adversary: bool = False) -> str:
 
 
 def make_tensor(task_id: str, num_envs: int = 2048, device: str = "cuda:0",
-                adversary: bool = False, **kw):
-  """GPU-resident env (primary path; pair with safety_sb3 PPO learners)."""
+                adversary: bool = False, end_criterion: Optional[str] = None,
+                **kw):
+  """GPU-resident env (primary path; pair with safety_sb3 PPO learners).
+
+  ``end_criterion`` (None -> the task's TaskSpec value; else an explicit
+  override, one of :data:`END_CRITERIA`) sets WHEN the episode ends from (g, l).
+  """
   from .base import MjlabTensorSafetyEnv
   s = spec(task_id)
   if adversary and not s.supports_adversary:
     raise ValueError(f"task '{task_id}' does not define an adversary")
   kw.setdefault("dense_reward", s.kind == "nominal")  # nominal => dense
+  ec = end_criterion if end_criterion is not None else s.end_criterion
   return MjlabTensorSafetyEnv(
     num_envs, device, cfg_builder=s.cfg_builder, margin_fn=s.margin_fn,
     ctrl_dim=s.ctrl_dim, dstb_dim=s.dstb_dim, adversary=adversary,
-    **{**s.kwargs, **kw})
+    end_criterion=ec, **{**s.kwargs, **kw})
 
 
 def make_numpy(task_id: str, num_envs: int = 64, device: str = "cuda:0",
-               adversary: bool = False, **kw):
-  """Classic SB3 VecEnv (for the SAC family / stock SB3 tooling)."""
+               adversary: bool = False, end_criterion: Optional[str] = None,
+               **kw):
+  """Classic SB3 VecEnv (for the SAC family / stock SB3 tooling).
+
+  ``end_criterion`` (None -> the task's TaskSpec value; else an override) sets
+  WHEN the episode ends from (g, l). See :func:`make_tensor`.
+  """
   from .base import MjlabNumpySafetyEnv
   s = spec(task_id)
   if adversary and not s.supports_adversary:
     raise ValueError(f"task '{task_id}' does not define an adversary")
   kw.setdefault("dense_reward", s.kind == "nominal")  # nominal => dense
+  ec = end_criterion if end_criterion is not None else s.end_criterion
   return MjlabNumpySafetyEnv(
     num_envs, device, cfg_builder=s.cfg_builder, margin_fn=s.margin_fn,
     ctrl_dim=s.ctrl_dim, dstb_dim=s.dstb_dim, adversary=adversary,
-    **{**s.kwargs, **kw})
+    end_criterion=ec, **{**s.kwargs, **kw})
