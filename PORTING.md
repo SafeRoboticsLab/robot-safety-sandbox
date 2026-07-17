@@ -80,7 +80,12 @@ most task-specific choice in the whole port:
 - rest with EXCLUSION windows (crawl) when only rest in certain regions
   counts — note the failure mode: if the robot can always bail out safely,
   plain rest is satisfiable everywhere and "stop always" wins.
-- avoid-only (`l_zero`) when there is no liveness requirement at all.
+- avoid-only — `compose(g_fn)`, NO l at all — when there is no liveness
+  requirement. Declare `default_algo="SafetyPPO"`; `--adversary` then gives
+  the two-player avoid game (`IsaacsPPO`). Do NOT pin l to a constant to make
+  a reach-avoid learner emulate avoid: it is provably not an instance of
+  reach-avoid (l<0 empties the safe set, l>=0 strips the lookahead — see
+  margins.py); `registry.algo_name` rejects that pairing.
 
 ## Step 3 — register (`tasks/<your_task>.py`)
 
@@ -138,5 +143,5 @@ and `eval/video` (a clip from step 0, then every 25M steps).
 
 `make_numpy(task_id, ...)` exposes the same task as a classic SB3 VecEnv
 (`info["l_x"]`, `TimeLimit.truncated`) for `SafetySAC`/`ReachAvoidSAC`/
-`IsaacsSAC` and stock SB3 tooling. Prefer the tensor path for on-policy work
+`IsaacsSAC`/`GameplaySAC` and stock SB3 tooling. Prefer the tensor path for on-policy work
 (~3x faster).

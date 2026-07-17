@@ -13,7 +13,10 @@ register(TaskSpec(
   task_id="my_task",
   cfg_builder=my_env_cfg,          # (play: bool) -> ManagerBasedRlEnvCfg
   margin_fn=my_margins,            # (env) -> (g, l)   [None for kind="nominal"]
-  default_algo="ReachAvoidPPO",    # SafetyPPO | ReachAvoidPPO | IsaacsPPO | PPO
+  default_algo="ReachAvoidPPO",    # the PROBLEM: SafetyPPO/IsaacsPPO = avoid,
+                                   # ReachAvoidPPO/GameplayPPO = reach-avoid.
+                                   # --adversary swaps in the 2-player learner
+                                   # of the SAME problem (see registry.algo_name)
   kind="safety",                   # "safety" (margins) | "nominal" (dense)
   supports_adversary=False,
 ))

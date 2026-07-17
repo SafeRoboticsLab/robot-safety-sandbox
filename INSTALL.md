@@ -4,7 +4,7 @@ Two packages, one benchmark:
 
 | repo | provides | depends on |
 |---|---|---|
-| [`safety-stable-baselines`](https://github.com/SafeRoboticsLab/safety-stable-baselines) (`safety_sb3`) | the ALGORITHMS: SafetyPPO / ReachAvoidPPO / IsaacsPPO (+ SAC variants), tensor path, buffers | SB3, torch |
+| [`safety-stable-baselines`](https://github.com/SafeRoboticsLab/safety-stable-baselines) (`safety_sb3`) | the ALGORITHMS: avoid (SafetyPPO / IsaacsPPO) + reach-avoid (ReachAvoidPPO / GameplayPPO), single- and two-player, (+ SAC variants), tensor path, buffers | SB3, torch |
 | `robot-safety-sandbox` (this repo) | the ENVIRONMENTS: task registry (safety + nominal layers), margins, bridges, trainers | mjlab, safety_sb3 |
 
 Neither depends on `unitree_rl_mjlab` (the legacy research repo) — the zoo is

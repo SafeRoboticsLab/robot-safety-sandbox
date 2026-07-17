@@ -36,7 +36,7 @@ Practical notes:
 - q_fn must be differentiable w.r.t. the action; one autograd call per
   ascent step, batched over envs.
 - On-policy twins (SafetyPPO / ReachAvoidPPO) learn V(s), not Q(s, a): use
-  this filter with off-policy twins (SafetySAC / ReachAvoidSAC / IsaacsSAC
+  this filter with off-policy twins (SafetySAC / ReachAvoidSAC / IsaacsSAC / GameplaySAC
   critics) or a distilled Q head.
 - A learned Q under optimization pressure is a certificate under attack
   (the Goodhart lesson): prefer an ensemble-LCB q_fn and validate against

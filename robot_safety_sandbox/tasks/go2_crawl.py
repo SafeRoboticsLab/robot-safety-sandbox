@@ -249,6 +249,6 @@ def register_all() -> None:
   register(TaskSpec(
     task_id="go2_crawl_isaacs", cfg_builder=unitree_go2_crawl_isaacs_env_cfg,
     margin_fn=crawl_margins,
-    default_algo="IsaacsPPO", warmstart_from="go2_crawl",
+    default_algo="GameplayPPO", warmstart_from="go2_crawl",
     supports_adversary=True,
     description="Crawl + worst-case base-force adversary."))

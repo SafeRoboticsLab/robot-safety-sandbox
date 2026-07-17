@@ -27,7 +27,7 @@ model.learn(2_000_000_000)
 | channel | meaning |
 |---|---|
 | reward | `g(s)` — physical safety margin. **Never normalize or reshape it.** |
-| `l_x` | `l(s)` — target margin (zeros for avoid-only tasks) |
+| `l_x` | `l(s)` — target margin. Avoid-only tasks declare NO target: `compose(g_fn)` emits zeros as an inert placeholder that the avoid learners ignore. |
 | dones / timeouts | mjlab auto-resets; timeouts are never value-bootstrapped |
 | `metrics()` | curriculum levels + task metrics, forwarded to the logger every rollout |
 
@@ -40,13 +40,17 @@ terrain — plain mjlab, algorithm-agnostic) + `margin_fn(env) -> (g, l)`
 
 | task | objective | learner | warm-starts from |
 |---|---|---|---|
-| `go2_stabilize` / `go2_locomote` | stand / track a command vs adversarial force (the original task; simplest zoo entry) | ReachAvoidPPO | — |
-| `digit_stabilize` | humanoid stand vs adversarial torso force (Digit analog of go2_stabilize) | ReachAvoidPPO | — |
+| `go2_stabilize` / `go2_locomote` | stand / track a command vs adversarial force (the original task; simplest zoo entry) | ReachAvoidPPO (`--adversary`: GameplayPPO) | — |
+| `digit_stabilize` | humanoid stand vs adversarial torso force (Digit analog of go2_stabilize) | ReachAvoidPPO (`--adversary`: GameplayPPO) | — |
+| `digit_stabilize_stay` / `_avoid` | humanoid STAY upright forever / don't fall — avoid, no target | SafetyPPO (`--adversary`: IsaacsPPO) | — |
+| `digit_box_stabilize_stay` / `_avoid` | as above + keep a box balanced on the forearms | SafetyPPO (`--adversary`: IsaacsPPO) | — |
 | `go2_gap_landing` | soft-land from mid-air over a gap | SafetyPPO | — |
 | `go2_gap_crossing` | reverse curriculum: landing → launch | SafetyPPO | landing |
 | `go2_gap_chain` | takeover momentum → safe rest (brake/jump) | ReachAvoidPPO | crossing |
-| `go2_gap_chain_isaacs` | chain + worst-case force adversary | IsaacsPPO | chain |
-| `go2_crawl` / `_isaacs` | duck under a low bar or stop | ReachAvoidPPO | — |
+| `go2_gap_chain_isaacs` | chain + worst-case force adversary | GameplayPPO | chain |
+| `go2_crawl` / `_isaacs` | duck under a low bar or stop | ReachAvoidPPO / GameplayPPO | — |
+| `go2_crawl_twin_avoid` / `go2_crawl_gate_avoid` | avoid twins of the crawl R-CBF pair (no target) | SafetyPPO | — |
+| `go2_crawl_twin_ra` / `go2_crawl_gate_ra` | reach-avoid twins of the crawl R-CBF pair | ReachAvoidPPO | — |
 
 Task structure varies: `go2_stabilize` needs no curriculum or staging at all,
 while the gap family only forms its jump through staged warm-starts
