@@ -1,0 +1,60 @@
+site_name: Robot Safety Sandbox
+site_description: Parallelized mjlab environments for safety-policy synthesis and filter evaluation
+repo_url: https://github.com/SafeRoboticsLab/robot-safety-sandbox
+repo_name: SafeRoboticsLab/robot-safety-sandbox
+edit_uri: edit/main/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle: { icon: material/weather-night, name: Dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle: { icon: material/weather-sunny, name: Light mode }
+
+# docs/log/ is the private, git-ignored project log — never publish it.
+extra_css:
+  - stylesheets/extra.css
+
+exclude_docs: |
+  log/
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: sphinx
+            show_source: true
+            show_root_heading: true
+            members_order: source
+            separate_signature: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.details
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.snippets: { base_path: [.] }   # include root README/INSTALL/PORTING
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - API guide: API.md
+  - Code reference: reference.md
+  - Extending: EXTENDING.md
+  - Porting a task: porting.md

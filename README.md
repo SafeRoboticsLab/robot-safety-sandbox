@@ -11,6 +11,11 @@ rollout shielding).
 
 > Renamed from `safe_mjlab_zoo`; the package is `robot_safety_sandbox`.
 
+📖 **[docs/API.md](docs/API.md)** is the canonical API reference — the `g`/`l` contract,
+`TaskSpec`, the registry, `end_criterion`, and the two bridges. It pairs with
+safety_sb3's [docs/API.md](https://github.com/SafeRoboticsLab/safety-stable-baselines/blob/main/docs/API.md)
+(the algorithm layer).
+
 ```python
 from robot_safety_sandbox import make_tensor, list_tasks
 from safety_sb3 import ReachAvoidPPO
