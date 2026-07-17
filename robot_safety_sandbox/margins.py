@@ -166,35 +166,66 @@ def l_launch_basin(env, gap_x=2.5, band=0.35, v_launch=2.2, v_norm=0.5,
   return torch.minimum(momentum, proximity)
 
 
-def l_zero(env):
-  """Avoid-only tasks: no reach target (l always 'unreached')."""
-  n = env.scene["robot"].data.root_link_pos_w.shape[0]
-  return torch.zeros(n, device=env.device)
-
-
-def l_neg(env):
-  """Avoid-only tasks under a REACH-AVOID learner (ReachAvoidPPO/IsaacsPPO).
-
-  Those learners use ``v_to_go = min(g, max(l, gV'))``. With ``l_zero`` the
-  target set is the WHOLE space (l >= 0 everywhere): ``max(0, gV')`` clips all
-  negative futures, so coming failures never propagate — a degenerate backup
-  that destroyed a warm-started policy within <25M steps (digit_stabilize_stay
-  + IsaacsPPO, 2026-07-10). Pinning ``l = -CLAMP`` (below any reachable value)
-  makes ``max(l, gV') = gV'`` — the backup reduces EXACTLY to the avoid /
-  viability backup ``min(g, gV')`` — turning IsaacsPPO into a two-player game
-  over the robust-invariance value. SafetyPPO ignores ``l``, so avoid-only
-  tasks that may also be trained adversarially should use ``l_neg``.
-  """
-  n = env.scene["robot"].data.root_link_pos_w.shape[0]
-  return torch.full((n,), -CLAMP, device=env.device)
+# --- avoid-only: there is NO l ------------------------------------------------
+#
+# ``l_zero`` and ``l_neg`` used to live here, so that an avoid-only task could be
+# run on a REACH-AVOID learner by pinning l to a constant. Both are DELETED
+# (2026-07-17): avoid is provably NOT a reach-avoid instance, so there is no
+# constant to pin. The reach-avoid operator is
+#
+#     V = (1-gamma) * min(l, g)  +  gamma * min(g, max(l, V'))
+#
+# and reducing it to avoid needs the ANCHOR to reduce (min(l,g) = g, i.e.
+# l >= g) AND the RECURSION to reduce (max(l,V') = V', i.e. l <= V'); the avoid
+# recursion caps V' <= g, so it needs l >= g >= V' >= l. No l satisfies it.
+#   - l = -CLAMP  (``l_neg``)  buys the recursion, destroys the anchor:
+#     V == -CLAMP everywhere ⇒ the safe set is EMPTY, while ep_len/ep_rew/
+#     critic_loss all look healthy. Silent.
+#   - l >= 0      (``l_zero``) buys the anchor, destroys the recursion: the
+#     target is the whole space, max(l, ·) clips every negative future and
+#     V == g — a myopic "am I safe right now" with no lookahead.
+# ``l_neg``'s old claim ("max(l, gV') = gV' reduces the backup to avoid") only
+# ever held under the g-anchored backup, which was the safety_sb3 v0.1.0 bug.
+# See safety_sb3/backups.py and RELEASE_NOTES v0.2.0 for the proof.
+#
+# An avoid-only task therefore declares NO l at all — ``compose(g_fn)`` — and
+# runs on an AVOID learner: SafetyPPO (single-player) or IsaacsPPO (two-player,
+# ISAACS eq. 7). Those ignore l entirely.
 
 
 # --- composition ---------------------------------------------------------------
 
-def compose(g_fn, l_fn, clamp: float = CLAMP):
-  """margin_fn from a g term and an l term (clamped for value regression)."""
+def compose(g_fn, l_fn=None, clamp: float = CLAMP):
+  """margin_fn from a g term and an l term (clamped for value regression).
+
+  ``l_fn=None`` declares an AVOID-ONLY task: there is no target set. The bridge
+  still has to hand the learner an ``l`` channel (``step_tensor`` returns a
+  5-tuple), so a zero placeholder is emitted — but the returned margin_fn is
+  tagged ``has_target = False``, and it is ONLY valid under an avoid learner
+  (SafetyPPO / IsaacsPPO), which ignores l. Feeding it to a reach-avoid learner
+  (ReachAvoidPPO / GameplayPPO) is the degenerate ``l_zero`` case above; the
+  tag exists so that mistake raises instead of training silently — see
+  ``registry.algo_name`` / ``examples/train.py``.
+  """
   def margin_fn(env):
     g = g_fn(env).clamp(-clamp, clamp)
-    l = l_fn(env).clamp(-clamp, clamp)
-    return g, l
+    if l_fn is None:
+      return g, torch.zeros_like(g)  # placeholder; avoid learners ignore it
+    return g, l_fn(env).clamp(-clamp, clamp)
+  margin_fn.has_target = l_fn is not None
   return margin_fn
+
+
+def avoid_only(margin_fn):
+  """Strip the reach target off an existing ``margin_fn`` -> avoid-only twin.
+
+  For twin pairs that share one (g, l) builder and differ only in the backup:
+  the avoid twin keeps g verbatim and declares no target. Same contract as
+  ``compose(g_fn)`` — the l channel is a zero placeholder, ``has_target`` is
+  False, and only an avoid learner may consume it.
+  """
+  def fn(env):
+    g, _l = margin_fn(env)
+    return g, torch.zeros_like(g)
+  fn.has_target = False
+  return fn

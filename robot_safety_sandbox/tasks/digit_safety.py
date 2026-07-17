@@ -2,9 +2,24 @@
 
 The humanoid analog of ``go2_stabilize`` (ISAACS Tier 2) and, like it, a
 "no-machinery" task: flat ground, stock spawns, zero command, no curriculum, no
-staged pipeline — a single reach-avoid task trainable from scratch in one run,
-robustified by toggling ``--adversary`` (the worst-case torso force replaces the
-random push the bridge drops).
+staged pipeline — trainable from scratch in one run, robustified by toggling
+``--adversary`` (the worst-case torso force replaces the random push the bridge
+drops).
+
+Two problems live here, and they take different backups (see margins.py):
+
+  digit_stabilize                    REACH-AVOID — a real, reachable target
+                                     (``l_digit_stay``). ReachAvoidPPO, or
+                                     GameplayPPO with ``--adversary``.
+  the other four (``*_avoid``,       AVOID — no target set, no l. SafetyPPO,
+  ``*_stay``, box family)            or IsaacsPPO with ``--adversary``.
+
+The ``*_stay`` tasks are avoid despite wanting a stance: "remain in the stance
+set forever" is VIABILITY, folded into g as ``min(g_fall, l_stance)`` (see
+``g_digit_stabilize``), not a reach. They previously declared ``l = -CLAMP``
+(``l_neg``) to make a reach-avoid learner emulate avoid; that trick is invalid
+(it yields an EMPTY safe set under the corrected anchor) and was removed
+2026-07-17 — avoid problems now use the avoid learners.
 
   g = don't fall (torso height, uprightness <80 deg, no non-foot ground contact);
       FALL-ONLY — no planted-stance term, so recovery STEPS are safe
@@ -29,7 +44,7 @@ dependency remains.
 
 from __future__ import annotations
 
-from ..margins import compose, l_neg
+from ..margins import compose
 from ..registry import TaskSpec, register
 
 
@@ -55,9 +70,9 @@ def register_all() -> None:
   register(TaskSpec(
     task_id="digit_box_stabilize_avoid",
     cfg_builder=digit_box_stabilize_env_cfg,
-    margin_fn=compose(g_digit_box_stand, l_neg),
+    margin_fn=compose(g_digit_box_stand),  # avoid-only: no target set
     ctrl_dim=20,
-    default_algo="SafetyPPO",
+    default_algo="SafetyPPO",  # +--adversary -> IsaacsPPO (two-player avoid)
     supports_adversary=True,
     kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
     description="Box stage 1: don't fall AND don't drop/spill the box "
@@ -67,9 +82,9 @@ def register_all() -> None:
   register(TaskSpec(
     task_id="digit_box_stabilize_stay",
     cfg_builder=digit_box_stabilize_env_cfg,
-    margin_fn=compose(g_digit_box_stabilize, l_neg),
+    margin_fn=compose(g_digit_box_stabilize),  # avoid-only: no target set
     ctrl_dim=20,
-    default_algo="SafetyPPO",
+    default_algo="SafetyPPO",  # +--adversary -> IsaacsPPO (two-player avoid)
     supports_adversary=True,
     kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
     description="Box STAY: remain upright/settled/planted (annealed via "
@@ -84,13 +99,14 @@ def register_all() -> None:
   register(TaskSpec(
     task_id="digit_stabilize_stay",
     cfg_builder=digit_stabilize_env_cfg,
-    # l_neg (not l_zero): under IsaacsPPO's reach-avoid backup, l=0 makes the
-    # whole space "the target" and clips failure propagation (destroyed the
-    # warm-started ctrl in <25M); l=-CLAMP reduces the backup exactly to the
-    # avoid/viability backup. SafetyPPO ignores l either way. See margins.l_neg.
-    margin_fn=compose(g_digit_stabilize, l_neg),
+    # No l: the STAY requirement is already folded into g as
+    # g' = min(g_fall, l_stance), and "remain in g' forever" is the AVOID
+    # backup. There is no target set, so there is no l to declare — the old
+    # l_neg trick (make a reach-avoid learner emulate avoid) is invalid under
+    # the corrected anchor and is gone; see margins.py.
+    margin_fn=compose(g_digit_stabilize),
     ctrl_dim=20,
-    default_algo="SafetyPPO",
+    default_algo="SafetyPPO",  # +--adversary -> IsaacsPPO (two-player avoid)
     supports_adversary=True,
     kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
     description="Flat ground: STAY upright + settled forever (viability of the "
@@ -101,9 +117,11 @@ def register_all() -> None:
   register(TaskSpec(
     task_id="digit_stabilize",
     cfg_builder=digit_stabilize_env_cfg,
+    # The one GENUINE reach-avoid task of the family: l_digit_stay is a real,
+    # reachable target set, so the reach-avoid backup applies as written.
     margin_fn=compose(g_digit_stand, l_digit_stay),
     ctrl_dim=20,
-    default_algo="ReachAvoidPPO",
+    default_algo="ReachAvoidPPO",  # +--adversary -> GameplayPPO (two-player RA)
     supports_adversary=True,
     kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
     description="Flat ground: stand in place (upright, at rest, near spawn) — a "
@@ -111,19 +129,19 @@ def register_all() -> None:
                 "force (humanoid ISAACS Tier-2).",
   ))
 
-  # Avoid-only twin (l = 0): identical env/g, no reach target. Isolation test —
-  # does the safety value (g) converge the same with vs without l? If this and
-  # digit_stabilize plateau alike, l is irrelevant to g-convergence (as the
-  # reach-avoid formulation predicts); if this converges much better, l is
-  # corrupting the g backup (algorithm bug).
+  # Avoid-only twin: identical env/g, NO reach target (the backup differs, not
+  # just the margin). Isolation test — does the safety value (g) converge the
+  # same with vs without the reach term? If this and digit_stabilize plateau
+  # alike, l is irrelevant to g-convergence (as the reach-avoid formulation
+  # predicts); if this converges much better, l is corrupting the g backup.
   register(TaskSpec(
     task_id="digit_stabilize_avoid",
     cfg_builder=digit_stabilize_env_cfg,
-    margin_fn=compose(g_digit_stand, l_neg),  # l_neg: safe under ISAACS too
+    margin_fn=compose(g_digit_stand),  # avoid-only: no target set
     ctrl_dim=20,
-    default_algo="SafetyPPO",
+    default_algo="SafetyPPO",  # +--adversary -> IsaacsPPO (two-player avoid)
     supports_adversary=True,
     kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
-    description="Avoid-only (l=0) twin of digit_stabilize: don't fall, no reach "
+    description="Avoid-only twin of digit_stabilize: don't fall, no reach "
                 "target. Isolation test for whether l affects g-convergence.",
   ))

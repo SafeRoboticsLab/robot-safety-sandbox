@@ -14,6 +14,7 @@ Nominal for the filter eval: go2_walker_flat (the same blind walker as gap).
 
 from __future__ import annotations
 
+from ..margins import avoid_only
 from ..registry import TaskSpec, register
 
 
@@ -25,18 +26,12 @@ def register_all() -> None:
     unitree_go2_crawl_twin_env_cfg,
   )
 
-  def _l_zero_wrap(margin_fn):
-    def fn(env):
-      g, l = margin_fn(env)
-      return g, l * 0.0   # avoid-only: same g, l identically 0
-    return fn
-
   register(TaskSpec(
     task_id="go2_crawl_twin_avoid",
     cfg_builder=unitree_go2_crawl_twin_env_cfg,
-    margin_fn=_l_zero_wrap(crawl_twin_margins), default_algo="SafetyPPO",
+    margin_fn=avoid_only(crawl_twin_margins), default_algo="SafetyPPO",
     description="STATIC-bar avoid twin (negative control). g = crawl "
-                "integrity, l = 0."))
+                "integrity, no reach target."))
   register(TaskSpec(
     task_id="go2_crawl_twin_ra",
     cfg_builder=unitree_go2_crawl_twin_env_cfg,
@@ -46,7 +41,7 @@ def register_all() -> None:
   register(TaskSpec(
     task_id="go2_crawl_gate_avoid",
     cfg_builder=unitree_go2_crawl_gate_twin_env_cfg,
-    margin_fn=_l_zero_wrap(crawl_gate_twin_margins), default_algo="SafetyPPO",
+    margin_fn=avoid_only(crawl_gate_twin_margins), default_algo="SafetyPPO",
     description="CLOSING-GATE avoid twin: g += virtual descending ceiling "
                 "after entry (+ crushed_by_gate termination). Prediction: "
                 "certified set excludes the gate span -> filter livelocks."))

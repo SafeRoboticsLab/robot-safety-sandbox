@@ -237,8 +237,10 @@ def g_digit_stabilize(env) -> torch.Tensor:
   ``_l_alpha`` annealing applies unchanged: at alpha=0 g' ~= g_fall (warm
   start from the avoid base is in-distribution), then the stance tightens.
 
-  Train with SafetyPPO (the proven avoid recipe) via compose(g_digit_stabilize,
-  l_zero).
+  Train with an AVOID learner on ``compose(g_digit_stabilize)`` — no l at all:
+  SafetyPPO (single-player) or IsaacsPPO (two-player, ``--adversary``). Do NOT
+  hand this to a reach-avoid learner with a constant l to "emulate" avoid: that
+  is provably impossible under the corrected anchor (see zoo margins.py).
   """
   return torch.minimum(g_digit_stand(env), l_digit_stay(env))
 
