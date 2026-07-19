@@ -166,10 +166,24 @@ like converged training in the reward curve.
 
 ## 7. Training
 
+Two entrypoints, split by algorithm family (both resolve the learner from
+*(task margins × `--adversary`)*):
+
+- **`examples/train.py`** — the **PPO** family (SafetyPPO / ReachAvoidPPO /
+  IsaacsPPO / GameplayPPO).
+- **`examples/train_sac.py`** — the **SAC** family (SafetySAC / ReachAvoidSAC /
+  IsaacsSAC / GameplaySAC), the off-policy analog. Same `--task` / `--adversary`
+  resolution; two-player-only knobs (`ctrl_action_dim`, leaderboard, per-agent
+  LRs, adversary force ramp) are gated behind `--adversary`.
+
 ```bash
-python examples/train.py --task go2_gap_chain \
-    --terminal-type all --end-criterion failure         # reach-deeper reach-avoid
-python examples/train.py --task digit_stabilize_avoid --adversary   # two-player avoid (IsaacsPPO)
+# PPO family
+python examples/train.py     --task go2_gap_chain --terminal-type all      # reach-avoid PPO
+python examples/train.py     --task digit_stabilize_avoid --adversary      # two-player avoid (IsaacsPPO)
+# SAC family
+python examples/train_sac.py --task go2_stabilize                          # 1-player reach-avoid (ReachAvoidSAC)
+python examples/train_sac.py --task go2_stabilize --adversary --num-envs 1024   # 2-player reach-avoid (GameplaySAC)
+python examples/train_sac.py --task digit_stabilize_avoid --adversary      # two-player avoid (IsaacsSAC)
 ```
 
 - `--terminal-type {all,g}` — forwarded to reach-avoid learners; ignored (with a
@@ -178,5 +192,13 @@ python examples/train.py --task digit_stabilize_avoid --adversary   # two-player
   for this run.
 - `--adversary` — two-player run; the learner is resolved by `algo_name`.
 
-Recipe that works (hard-won): `normalize_obs=True` (obs only), `ent_coef=1e-4`,
+`train_sac.py` exposes the reference-faithful controls (see safety_sb3
+[hyperparameters](https://saferoboticslab.github.io/safety-stable-baselines/hyperparameters/)):
+`--gamma-schedule` (discount anneal, default the discrete-jump schedule),
+`--min-alpha`, per-agent `--critic-lr/--dstb-lr/--ent-coef-lr/--dstb-ent-coef-lr`,
+`--eval-rollouts` (safe/success-rate to wandb), and **throughput** leaderboard
+defaults (`--leaderboard-freq 2_000_000 --leaderboard-episodes 3` + an on-device
+tensor eval env — ~30× over the old settings at 1024 envs).
+
+PPO recipe that works (hard-won): `normalize_obs=True` (obs only), `ent_coef=1e-4`,
 `log_std_init=ln(0.3)`, `adaptive_lr=True`, `n_steps=48`. See README.
