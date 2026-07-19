@@ -69,5 +69,8 @@ def go2_payload_stabilize_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.scene.entities["robot"] = get_go2_payload_robot_cfg(**DEFAULT_PAYLOAD)
   _scope_joint_rewards_to_legs(cfg)   # keep dense joint rewards on the 12 legs, not the payload hinges
   _add_odd_events(cfg)                 # per-env ODD: rigidity × total-mass
+  # The payload's 4 limited hinges add limit-constraints; base go2 njmax=300 overflows (~400 peak) and
+  # mujoco-warp silently DROPS the excess. Raise the per-world constraint budget with margin.
+  cfg.sim.njmax = 600
   _pin_twist(cfg, 0.0)   # zero command: the target is a stable stand
   return cfg
