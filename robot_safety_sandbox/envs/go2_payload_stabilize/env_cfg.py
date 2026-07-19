@@ -17,6 +17,8 @@ the payload joint stiffness / block masses).
 from __future__ import annotations
 
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs.mdp import dr
+from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 
 from robot_safety_sandbox.envs.assets_go2_payload import get_go2_payload_robot_cfg
@@ -25,6 +27,23 @@ from robot_safety_sandbox.envs.velocity.go2 import unitree_go2_flat_env_cfg
 
 # The 12 Go2 leg joints (payload hinges are named ``payload_j*`` ⇒ excluded by ``_joint`` suffix).
 _LEG_JOINTS = "^(FL|FR|RL|RR)_.*_joint$"
+
+# ── THE ODD distribution (per-env, sampled at startup) — rigidity × total-mass ──────────────────
+RIGIDITY_RANGE = (0.0, 300.0)     # payload hinge stiffness: 0 = water-like slosh … 300 ≈ rigid box
+MASS_SCALE_RANGE = (0.4, 2.5)     # × DEFAULT_PAYLOAD total_mass (3 kg) ⇒ ~[1.2, 7.5] kg
+
+
+def _add_odd_events(cfg: ManagerBasedRlEnvCfg) -> None:
+  """Randomize the payload ODD (rigidity × total-mass) PER-ENV at startup — one θ per env, so the
+  parallel envs sample the ODD distribution. Read back live from model.jnt_stiffness / body_mass."""
+  cfg.events["payload_rigidity"] = EventTermCfg(   # RIGIDITY axis (hinge stiffness, shared per env)
+    func=dr.joint_stiffness, mode="startup",
+    params={"asset_cfg": SceneEntityCfg("robot", joint_names="payload_j.*"),
+            "ranges": RIGIDITY_RANGE, "operation": "abs", "shared_random": True})
+  cfg.events["payload_mass"] = EventTermCfg(        # TOTAL-MASS axis (one scale per env, all blocks)
+    func=dr.body_mass, mode="startup",
+    params={"asset_cfg": SceneEntityCfg("robot", body_names="payload_.*"),
+            "ranges": MASS_SCALE_RANGE, "operation": "scale", "shared_random": True})
 
 
 def _scope_joint_rewards_to_legs(cfg: ManagerBasedRlEnvCfg) -> None:
@@ -49,5 +68,6 @@ def go2_payload_stabilize_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # swap the base Go2 for the Go2+payload (same base_link / feet / leg joints ⇒ sensors & margins hold)
   cfg.scene.entities["robot"] = get_go2_payload_robot_cfg(**DEFAULT_PAYLOAD)
   _scope_joint_rewards_to_legs(cfg)   # keep dense joint rewards on the 12 legs, not the payload hinges
+  _add_odd_events(cfg)                 # per-env ODD: rigidity × total-mass
   _pin_twist(cfg, 0.0)   # zero command: the target is a stable stand
   return cfg
