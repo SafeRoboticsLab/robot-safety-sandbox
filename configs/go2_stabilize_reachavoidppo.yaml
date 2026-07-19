@@ -1,0 +1,20 @@
+# One-player reach-avoid PPO (ReachAvoidPPO) on go2_stabilize — the safety-PPO
+# recipe (obs-normalized, fixed LR, KL early-stop, capped action std).
+#   python examples/train.py --config configs/go2_stabilize_reachavoidppo.yaml
+# (add `adversary: true` for the two-player GameplayPPO variant.)
+task: go2_stabilize
+num_envs: 1024
+steps: 100000000
+seed: 0
+
+# --- safety-PPO recipe ---
+lr: 1.0e-4
+adaptive_lr: false           # fixed LR (--no-adaptive-lr) for the sparse safety signal
+target_kl: 0.01              # early-stop actor epochs at this KL
+ent_coef: 1.0e-3
+max_std: 0.4                 # cap the action std (prevents entropy runaway)
+net: "128,128,128"           # safety net width
+terminal_type: all           # value a terminal step as min(l,g)
+
+# gamma annealing is ON by default (discrete jumps 0.99->0.9999); train.py does
+# not expose a gamma-schedule flag, so it uses the safety_sb3 default.

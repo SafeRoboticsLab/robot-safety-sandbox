@@ -50,6 +50,7 @@ except ImportError:
 import torch as th  # noqa: E402
 from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback  # noqa: E402
 
+from _run_config import dump_config, merge_config  # noqa: E402  (examples/ sibling)
 from robot_safety_sandbox import (  # noqa: E402
   algo_name, list_tasks, make_tensor, spec)
 from robot_safety_sandbox.callbacks import (  # noqa: E402
@@ -81,6 +82,9 @@ REACH_AVOID_ALGOS = {"ReachAvoidPPO", "GameplayPPO"}  # -> eval reach_avoid flag
 def main():
   p = argparse.ArgumentParser(description=__doc__,
                               formatter_class=argparse.RawDescriptionHelpFormatter)
+  p.add_argument("--config", default=None,
+                 help="YAML recipe of args (keys = flag dest names). Sets defaults; "
+                      "explicit CLI flags override it. See configs/.")
   p.add_argument("--task", required=True, help=f"one of {list_tasks()}")
   p.add_argument("--num-envs", type=int, default=1024)
   p.add_argument("--steps", type=int, default=100_000_000)
@@ -182,7 +186,7 @@ def main():
   p.add_argument("--leaderboard-freq", type=int, default=2_000_000,
                  help="env-steps between league evals (was 100k = every ~98 "
                       "vec-steps at 1024 envs -- absurdly frequent)")
-  args = p.parse_args()
+  args = merge_config(p)   # parse args; an optional --config sets defaults, CLI overrides
 
   # --- resolve task + learner (2x2: problem from margins, players from --adversary) ---
   s = spec(args.task)
@@ -210,6 +214,7 @@ def main():
   tag = f"{args.task}_{sac_name.lower()}" + ("_smoke" if args.smoke else "")
   outdir = os.path.join(args.out, tag)
   os.makedirs(outdir, exist_ok=True)
+  dump_config(outdir, args)   # reproducible: re-run with --config <outdir>/config.yaml
 
   # --- training env (GPU-resident tensor path; adversary iff two-player) ---
   env = make_tensor(args.task, args.num_envs, args.device,

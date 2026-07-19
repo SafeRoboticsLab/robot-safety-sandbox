@@ -191,6 +191,15 @@ python examples/train_sac.py --task digit_stabilize_avoid --adversary      # two
 - `--end-criterion {failure,reach-avoid,timeout}` — overrides the task's default
   for this run.
 - `--adversary` — two-player run; the learner is resolved by `algo_name`.
+- `--config <file.yaml>` — a reusable **recipe** (keys = flag names) that sets
+  defaults; explicit CLI flags still override it (`argparse defaults < config <
+  CLI`). Every run also dumps its fully-resolved config to `<outdir>/config.yaml`
+  (re-run with `--config <that file>` to reproduce). Recipes live in `configs/`.
+
+```bash
+python examples/train_sac.py --config configs/go2_stabilize_gameplaysac.yaml         # the E042 recipe
+python examples/train_sac.py --config configs/go2_stabilize_gameplaysac.yaml --seed 3  # override one knob
+```
 
 `train_sac.py` exposes the reference-faithful controls (see safety_sb3
 [hyperparameters](https://saferoboticslab.github.io/safety-stable-baselines/hyperparameters/)):

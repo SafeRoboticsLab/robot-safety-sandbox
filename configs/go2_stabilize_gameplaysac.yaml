@@ -1,0 +1,32 @@
+# Two-player reach-avoid SAC (GameplaySAC) on go2_stabilize.
+# Reference-faithful (safe_adaptation_dev/go2_pybullet_isaacs_br.yaml) + the fast
+# leaderboard config. This is the E042 recipe.
+#   python examples/train_sac.py --config configs/go2_stabilize_gameplaysac.yaml
+task: go2_stabilize
+adversary: true              # -> GameplaySAC (2-player reach-avoid)
+num_envs: 1024
+steps: 100000000
+seed: 0
+
+# --- SAC hypers (reference) ---
+lr: 1.0e-4
+tau: 0.01
+target_update_interval: 2
+ent_coef: auto_0.1           # learned entropy temperature, init 0.1
+buffer_size: 1000000
+batch_size: 4096
+gradient_steps: 4
+
+# --- discount annealing (reference-faithful discrete jumps) ---
+gamma_schedule: step         # 0.99 -> 0.999 @20% -> 0.9999 @40%, hold; resets alpha per jump
+gamma_init: 0.99
+gamma_end: 0.9999
+min_alpha: 0.001             # entropy-temperature floor
+
+# --- leaderboard: THROUGHPUT config (league eval was ~97% of wall-clock) ---
+leaderboard_freq: 2000000    # was 100k = every ~98 vec-steps
+leaderboard_episodes: 3      # was 10; the league is a relative ranking
+
+# --- safe/success-rate eval to wandb ---
+eval_rollouts: 100
+eval_freq: 2000000

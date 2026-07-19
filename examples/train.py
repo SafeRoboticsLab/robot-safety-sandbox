@@ -34,6 +34,7 @@ except ImportError:
 import torch as th  # noqa: E402
 from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback  # noqa: E402
 
+from _run_config import dump_config, merge_config  # noqa: E402  (examples/ sibling)
 from safety_sb3 import IsaacsPPO, ReachAvoidPPO, SafetyPPO  # noqa: E402
 from robot_safety_sandbox import algo_name, list_tasks, make_tensor, spec  # noqa: E402
 from robot_safety_sandbox.callbacks import (  # noqa: E402
@@ -67,6 +68,9 @@ except ImportError:
 
 def main():
   p = argparse.ArgumentParser()
+  p.add_argument("--config", default=None,
+                 help="YAML recipe of args (keys = flag dest names). Sets defaults; "
+                      "explicit CLI flags override it. See configs/.")
   p.add_argument("--task", required=True, help=f"one of {list_tasks()}")
   p.add_argument("--num-envs", type=int, default=2048)
   p.add_argument("--steps", type=int, default=200_000_000)
@@ -162,7 +166,7 @@ def main():
                       "never invent runs_<suffix> siblings, they escape .gitignore")
   p.add_argument("--wandb-project", default="robot_safety_sandbox")
   p.add_argument("--no-wandb", action="store_true")
-  args = p.parse_args()
+  args = merge_config(p)   # parse args; an optional --config sets defaults, CLI overrides
 
   s = spec(args.task)
   if s.kind != "safety":
@@ -172,6 +176,7 @@ def main():
   tag = args.task + ("_adv" if args.adversary else "")
   outdir = os.path.join(args.out, tag)
   os.makedirs(outdir, exist_ok=True)
+  dump_config(outdir, args)   # reproducible: re-run with --config <outdir>/config.yaml
 
   # Resolve the learner from the task's PROBLEM (avoid vs reach-avoid, set by
   # its margins) x the RUN's player count (--adversary). algo_name() also
