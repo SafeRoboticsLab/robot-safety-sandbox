@@ -1,0 +1,9 @@
+# Car-goal reach-avoid (ReachAvoidPPO) — the tutorial recipe.
+#   python examples/train.py --config configs/car_goal.yaml
+task: car_goal
+num_envs: 1024
+steps: 25000000
+seed: 0
+net: "256,256"          # small net: the obs is low-dim (car state + goal + 2 obstacles)
+ent_coef: 0.003         # a little exploration to find the goal past the obstacles
+video_interval: 2000000 # a training clip to wandb every ~2M steps

@@ -9,6 +9,9 @@ plus a `filters/` library (value shielding, R-CBF/Q-CBF projection, rollout shie
 
 ## Start here
 
+- **[Tutorial: your first env](tutorial-car-goal.md)** — new here? Build one complete
+  reach-avoid task from scratch (a car that reaches a goal while avoiding obstacles)
+  and train it end to end. Theory-grounded, seven steps, one small robot.
 - **[Environments](environments/index.md)** — the robot benchmark showreel (Go2 gap, crawl, Digit): task, margins, run-it snippet, figures.
 
 - **[Installation](installation.md)** — the pinned mjlab sim stack.

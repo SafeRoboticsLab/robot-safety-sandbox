@@ -17,6 +17,7 @@ from .tasks import go2_gap as _go2_gap
 from .tasks import go2_stabilize as _go2_stabilize
 from .tasks import go2_crawl_twins as _go2_crawl_twins
 from .tasks import go2_gap_brake_or_jump as _go2_gap_brake_or_jump
+from .tasks import car_goal as _car_goal
 from .nominal import go2_crawl_walker as _go2_crawl_walker
 from .nominal import go2_walker as _go2_walker
 
@@ -27,6 +28,7 @@ _go2_stabilize.register_all()
 _digit_safety.register_all()
 _go2_crawl_twins.register_all()
 _go2_gap_brake_or_jump.register_all()  # split test: harvested-state RA vs avoid twins
+_car_goal.register_all()  # bicycle5d analog: diff-drive car reach-avoid (tutorial)
 # nominal task policies (dense reward + vanilla SB3) — what filters wrap
 _go2_walker.register_all()
 _go2_crawl_walker.register_all()

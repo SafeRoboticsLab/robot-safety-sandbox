@@ -11,9 +11,18 @@ with the algorithm layer, see the
 
 <div class="grid cards" markdown>
 
+-   ### [Car-goal (tutorial)](../tutorial-car-goal.md)
+
+    ![car goal](assets/car_goal.gif){ width="320" }
+
+    The new-user walkthrough: a diff-drive car reaches a goal while avoiding
+    obstacles. One small robot, built from scratch, seven steps.
+
+    `ReachAvoidPPO`
+
 -   ### [Go2 gap-jumping](go2-gap.md)
 
-    ![go2 gap](assets/go2_gap.png){ width="320" }
+    ![go2 gap](assets/go2_gap_crossing.gif){ width="320" }
 
     A quadruped brakes or commits to a leap over a pit. The flagship
     reach-avoid pipeline: `landing → crossing → chain → +ISAACS`.
