@@ -85,7 +85,11 @@ def _go2_payload_env_cfg(play: bool, payload: dict, randomize_odd: bool) -> Mana
   # (measured: k=300 -> |qvel|~2400, diverges). The `implicit` integrator does NOT help (springs are
   # position-, not velocity-, dependent). Halve the physics dt: k=300 is stable at dt=0.002 with ~2.3x
   # margin across the whole ODD, and — unlike armature — it preserves the slosh dynamics exactly.
+  # CRUCIAL: raise decimation in lockstep so the ENV step stays 0.02 s (50 Hz control, as base go2).
+  # Otherwise env_dt = 0.002×4 = 0.008 (125 Hz) — mistunes the velocity task (gait/action-rate/horizon)
+  # and plays eval videos ~2.5× slow. 0.002 × 10 = 0.02 keeps the control rate identical to base go2.
   cfg.sim.mujoco.timestep = 0.002
+  cfg.decimation = 10
   _pin_twist(cfg, 0.0)   # zero command: the target is a stable stand
   return cfg
 
