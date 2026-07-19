@@ -110,7 +110,8 @@ def safety_margin_hook(env, margin_fn=None) -> torch.Tensor:
 
 def build_task_cfg(cfg_builder: Callable, margin_fn: Callable, num_envs: int,
                    drop_events: tuple[str, ...] = ("push_robot",),
-                   dense: bool = False, end_criterion: str = "failure"):
+                   dense: bool = False, end_criterion: str = "failure",
+                   cfg_overrides: dict | None = None):
   """Assemble an mjlab cfg for the zoo: task cfg + the margin hook.
 
   ``drop_events`` removes events a learned adversary replaces (default: the
@@ -133,7 +134,17 @@ def build_task_cfg(cfg_builder: Callable, margin_fn: Callable, num_envs: int,
                       value-learning / diagnostic). g is still anchored nowhere,
                       so failures live on in the margin, they just don't reset.
   """
-  cfg = cfg_builder(play=False)
+  # cfg_overrides: experiment-level env/task params forwarded to the cfg_builder
+  # (partial call-kwargs override the task registration's baked values, e.g.
+  # {"gate_close_rate": 0.003}). Fail loud on a param the cfg_builder rejects.
+  try:
+    cfg = cfg_builder(play=False, **(cfg_overrides or {}))
+  except TypeError as e:
+    if cfg_overrides:
+      raise SystemExit(
+        f"[cfg_overrides] {list(cfg_overrides)} not all accepted by the task's "
+        f"cfg_builder: {e}") from e
+    raise
   cfg.scene.num_envs = int(num_envs)
   if cfg.events is not None:
     for e in drop_events:
@@ -164,7 +175,8 @@ class _MjlabCore:
                  ctrl_dim, dstb_dim, ctrl_gain, force_max, adversary,
                  adversary_body, render_mode, obs_key=None, dense_reward=False,
                  dstb_mode="wrench", dstb_gain=0.25, hybrid_skill=None,
-                 latch_margin_fn=None, end_criterion="failure"):
+                 latch_margin_fn=None, end_criterion="failure",
+                 cfg_overrides=None):
     self.obs_key = obs_key  # resolved after first reset (auto-detect)
     self.end_criterion = str(end_criterion)
     self.ctrl_dim = int(ctrl_dim)
@@ -182,7 +194,8 @@ class _MjlabCore:
     self.render_mode = render_mode
     self.mj = ManagerBasedRlEnv(
       cfg=build_task_cfg(cfg_builder, margin_fn, num_envs, dense=dense_reward,
-                         end_criterion=self.end_criterion),
+                         end_criterion=self.end_criterion,
+                         cfg_overrides=cfg_overrides),
       device=device, render_mode="rgb_array" if render_mode else None)
     self._robot = self.mj.scene["robot"]
     if self.dstb_mode == "wrench":
@@ -328,7 +341,8 @@ class MjlabTensorSafetyEnv(_MjlabCore, TensorVecEnv):
                force_max=50.0, adversary=False, adversary_body="base_link",
                render_mode=None, obs_key=None, dense_reward=False,
                dstb_mode="wrench", dstb_gain=0.25, hybrid_skill=None,
-                 latch_margin_fn=None, end_criterion="failure"):
+                 latch_margin_fn=None, end_criterion="failure",
+               cfg_overrides=None):
     if not _HAS_SAFETY_SB3:
       raise ImportError(
         "safety_sb3 is required for the tensor bridge (pip install it or put "
@@ -340,7 +354,8 @@ class MjlabTensorSafetyEnv(_MjlabCore, TensorVecEnv):
       adversary=adversary, adversary_body=adversary_body,
       render_mode=render_mode, obs_key=obs_key, dense_reward=dense_reward,
       dstb_mode=dstb_mode, dstb_gain=dstb_gain, hybrid_skill=hybrid_skill,
-      latch_margin_fn=latch_margin_fn, end_criterion=end_criterion)
+      latch_margin_fn=latch_margin_fn, end_criterion=end_criterion,
+      cfg_overrides=cfg_overrides)
     TensorVecEnv.__init__(self, int(num_envs), obs_space, act_space, device)
 
   def reset(self) -> torch.Tensor:
@@ -374,14 +389,15 @@ class MjlabNumpySafetyEnv(_MjlabCore, VecEnv):
                adversary=False, adversary_body="base_link", render_mode=None,
                obs_key=None, dense_reward=False, dstb_mode="wrench",
                dstb_gain=0.25, hybrid_skill=None, latch_margin_fn=None,
-               end_criterion="failure"):
+               end_criterion="failure", cfg_overrides=None):
     obs_space, act_space = self._init_core(
       num_envs, device, cfg_builder, margin_fn, ctrl_dim=ctrl_dim,
       dstb_dim=dstb_dim, ctrl_gain=ctrl_gain, force_max=force_max,
       adversary=adversary, adversary_body=adversary_body,
       render_mode=render_mode, obs_key=obs_key, dense_reward=dense_reward,
       dstb_mode=dstb_mode, dstb_gain=dstb_gain, hybrid_skill=hybrid_skill,
-      latch_margin_fn=latch_margin_fn, end_criterion=end_criterion)
+      latch_margin_fn=latch_margin_fn, end_criterion=end_criterion,
+      cfg_overrides=cfg_overrides)
     self._device = device
     VecEnv.__init__(self, int(num_envs), obs_space, act_space)
     self._actions = None

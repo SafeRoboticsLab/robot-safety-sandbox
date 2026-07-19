@@ -16,6 +16,32 @@ Precedence: **argparse defaults  <  `--config` file  <  explicit CLI flags.** So
 recipe is a starting point you can still tweak per run. Config keys are validated
 against the trainer's flags (an unknown key is an error).
 
+## Env / task overrides (no trainer flag needed)
+
+A reserved **`env_overrides:`** block (a dict) tunes the *environment/task* itself
+— params baked into the task's registration (its `cfg_builder`), e.g.
+`gate_close_rate`, `bar_clearance`, spawn/force ranges. It is a **passthrough**
+(not validated against the trainer flags) forwarded to `make_tensor`, so a config
+can define a full experiment — algorithm **and** env — without editing `train.py`
+or adding argparse:
+
+```yaml
+task: go2_low_bar_gate_ra
+num_envs: 1024
+env_overrides:
+  gate_close_rate: 0.003   # override the value baked into the task registration
+  bar_clearance: 0.30
+```
+
+Or per-knob on the CLI (repeatable; overrides the config's `env_overrides` per key):
+
+```bash
+python examples/train.py --config <recipe>.yaml --env-override gate_close_rate=0.003
+```
+
+An override key the task's `cfg_builder` doesn't accept fails loud. The resolved
+`env_overrides` is written into the per-run `config.yaml` (reproducible).
+
 ## Reproducibility
 
 Every run writes its **fully-resolved** config to `<outdir>/config.yaml`. To

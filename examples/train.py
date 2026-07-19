@@ -71,6 +71,10 @@ def main():
   p.add_argument("--config", default=None,
                  help="YAML recipe of args (keys = flag dest names). Sets defaults; "
                       "explicit CLI flags override it. See configs/.")
+  p.add_argument("--env-override", action="append", metavar="KEY=VAL", default=None,
+                 help="override an env/task cfg_builder param (repeatable), e.g. "
+                      "--env-override gate_close_rate=0.003. Also settable as a "
+                      "config `env_overrides:` dict. Forwarded to make_tensor.")
   p.add_argument("--task", required=True, help=f"one of {list_tasks()}")
   p.add_argument("--num-envs", type=int, default=2048)
   p.add_argument("--steps", type=int, default=200_000_000)
@@ -193,7 +197,8 @@ def main():
   print(f"[algo] {args.task} adversary={args.adversary} -> {algo}")
 
   env = make_tensor(args.task, args.num_envs, args.device,
-                    adversary=args.adversary, end_criterion=args.end_criterion)
+                    adversary=args.adversary, end_criterion=args.end_criterion,
+                    cfg_overrides=args.env_overrides)
   eff_ec = args.end_criterion if args.end_criterion is not None else s.end_criterion
   print(f"[end-criterion] {args.task} -> {eff_ec}"
         f"{' (override)' if args.end_criterion is not None else ' (task default)'}")

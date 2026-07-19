@@ -161,11 +161,15 @@ def algo_name(task_id: str, adversary: bool = False) -> str:
 
 def make_tensor(task_id: str, num_envs: int = 2048, device: str = "cuda:0",
                 adversary: bool = False, end_criterion: Optional[str] = None,
-                **kw):
+                cfg_overrides: Optional[dict] = None, **kw):
   """GPU-resident env (primary path; pair with safety_sb3 PPO learners).
 
   ``end_criterion`` (None -> the task's TaskSpec value; else an explicit
   override, one of :data:`END_CRITERIA`) sets WHEN the episode ends from (g, l).
+  ``cfg_overrides`` (dict) forwards experiment-level env/task params to the
+  task's cfg_builder, overriding the values baked into its registration (e.g.
+  ``{"gate_close_rate": 0.003}``) -- lets a config recipe tune the env without
+  editing the task or the trainer flags.
   """
   from .base import MjlabTensorSafetyEnv
   s = spec(task_id)
@@ -176,16 +180,17 @@ def make_tensor(task_id: str, num_envs: int = 2048, device: str = "cuda:0",
   return MjlabTensorSafetyEnv(
     num_envs, device, cfg_builder=s.cfg_builder, margin_fn=s.margin_fn,
     ctrl_dim=s.ctrl_dim, dstb_dim=s.dstb_dim, adversary=adversary,
-    end_criterion=ec, **{**s.kwargs, **kw})
+    end_criterion=ec, cfg_overrides=cfg_overrides, **{**s.kwargs, **kw})
 
 
 def make_numpy(task_id: str, num_envs: int = 64, device: str = "cuda:0",
                adversary: bool = False, end_criterion: Optional[str] = None,
-               **kw):
+               cfg_overrides: Optional[dict] = None, **kw):
   """Classic SB3 VecEnv (for the SAC family / stock SB3 tooling).
 
   ``end_criterion`` (None -> the task's TaskSpec value; else an override) sets
-  WHEN the episode ends from (g, l). See :func:`make_tensor`.
+  WHEN the episode ends from (g, l). ``cfg_overrides`` (dict) forwards env/task
+  params to the task's cfg_builder. See :func:`make_tensor`.
   """
   from .base import MjlabNumpySafetyEnv
   s = spec(task_id)
@@ -196,4 +201,4 @@ def make_numpy(task_id: str, num_envs: int = 64, device: str = "cuda:0",
   return MjlabNumpySafetyEnv(
     num_envs, device, cfg_builder=s.cfg_builder, margin_fn=s.margin_fn,
     ctrl_dim=s.ctrl_dim, dstb_dim=s.dstb_dim, adversary=adversary,
-    end_criterion=ec, **{**s.kwargs, **kw})
+    end_criterion=ec, cfg_overrides=cfg_overrides, **{**s.kwargs, **kw})

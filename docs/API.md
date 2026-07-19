@@ -200,6 +200,10 @@ python examples/train_sac.py --task digit_stabilize_avoid --adversary      # two
 python examples/train_sac.py --config configs/go2_stabilize_gameplaysac.yaml         # the E042 recipe
 python examples/train_sac.py --config configs/go2_stabilize_gameplaysac.yaml --seed 3  # override one knob
 ```
+- **Env/task overrides** — a config `env_overrides:` dict (or `--env-override KEY=VAL`,
+  repeatable) forwards params to the task's `cfg_builder`, overriding values baked into
+  its registration (e.g. `gate_close_rate`, `bar_clearance`) — so a recipe can define the
+  *environment* too, no argparse edit. An unaccepted key fails loud.
 
 `train_sac.py` exposes the reference-faithful controls (see safety_sb3
 [hyperparameters](https://saferoboticslab.github.io/safety-stable-baselines/hyperparameters/)):
