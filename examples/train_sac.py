@@ -51,7 +51,7 @@ import torch as th  # noqa: E402
 from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback  # noqa: E402
 
 from robot_safety_sandbox import (  # noqa: E402
-  algo_name, list_tasks, make_numpy, make_tensor, spec)
+  algo_name, list_tasks, make_tensor, spec)
 from robot_safety_sandbox.callbacks import (  # noqa: E402
   ForceRampCallback,
   PerEnvForceScaleCallback,
@@ -71,50 +71,11 @@ PPO_TO_SAC = {
 }
 REACH_AVOID_ALGOS = {"ReachAvoidPPO", "GameplayPPO"}  # -> eval reach_avoid flag
 
-
-class _NormEvalVecEnv:
-  """Wrap the numpy leaderboard-eval VecEnv so its obs are normalized with the
-  training TensorVecNormalize running stats before reaching the actors.
-  (Two-player only -- the leaderboard is a 2-agent construct.)
-
-  WHY a numpy env (not make_tensor): the leaderboard's `_eval_pair` routes any
-  env exposing `num_envs` + `step_async` to `_eval_pair_vec`, which drives it
-  with the CLASSIC numpy VecEnv API (`step_async` / `step_wait` returning
-  `(obs, g, dones, infos)` with `info["l_x"]`). A `TensorVecEnv` deliberately
-  RAISES on `step_async`/`step_wait` (tensor path only), so a tensor eval env
-  would crash the first leaderboard step. `make_numpy(..., adversary=True)`
-  gives the exact surface it needs.
-
-  WHY normalize: the policy trains on normalized obs (normalize_obs=True wraps
-  the train env in TensorVecNormalize), but the numpy eval env returns RAW obs.
-  Feeding raw obs to the actors would make every leaderboard score meaningless.
-  We normalize with the SAME running stats (rsl_rl train/eval parity). The norm
-  fn is injected AFTER model construction (the normalizer doesn't exist before).
-  """
-
-  def __init__(self, inner):
-    self.inner = inner
-    self.num_envs = inner.num_envs
-    self._norm = None  # callable(np.ndarray) -> np.ndarray, set post-construction
-
-  def set_normalizer(self, fn):
-    self._norm = fn
-
-  def _n(self, obs):
-    return obs if self._norm is None else self._norm(obs)
-
-  def reset(self):
-    return self._n(self.inner.reset())
-
-  def step_async(self, actions):
-    self.inner.step_async(actions)
-
-  def step_wait(self):
-    obs, g, dones, infos = self.inner.step_wait()
-    return self._n(obs), g, dones, infos
-
-  def close(self):
-    self.inner.close()
+# NOTE: the leaderboard eval env is now a RAW TensorVecEnv (GameplaySAC dispatches
+# to `_eval_pair_tensor`, on-device, normalizing obs via the live training
+# normalizer). The old numpy `_NormEvalVecEnv` wrapper is gone -- profiling showed
+# the league eval (not the numpy transfer) was the throughput bottleneck, fixed by
+# fewer eval episodes + a higher leaderboard_freq (see the --leaderboard-* defaults).
 
 
 def main():
@@ -210,10 +171,17 @@ def main():
   p.add_argument("--lr-period", type=int, default=1_000_000)
   p.add_argument("--lr-decay", type=float, default=0.1)
   p.add_argument("--lr-end", type=float, default=0.0)
-  # --- leaderboard knobs (two-player only) ---
+  # --- leaderboard knobs (two-player only). Defaults tuned for THROUGHPUT: the
+  # league eval cost scales with (episodes x pairings x episode_len x freq), and
+  # profiling showed it was ~90% of wall-clock at the old 100k/10 settings (one
+  # _leaderboard_step ~100s). The league is a relative ranking, so a few episodes
+  # every ~2M steps suffices; the eval env is a RAW tensor env (on-device). ---
   p.add_argument("--leaderboard-eval-envs", type=int, default=64)
-  p.add_argument("--leaderboard-episodes", type=int, default=10)
-  p.add_argument("--leaderboard-freq", type=int, default=100_000)
+  p.add_argument("--leaderboard-episodes", type=int, default=3,
+                 help="eval batches per pairing (was 10; league is a ranking)")
+  p.add_argument("--leaderboard-freq", type=int, default=2_000_000,
+                 help="env-steps between league evals (was 100k = every ~98 "
+                      "vec-steps at 1024 envs -- absurdly frequent)")
   args = p.parse_args()
 
   # --- resolve task + learner (2x2: problem from margins, players from --adversary) ---
@@ -300,9 +268,11 @@ def main():
     lb_eval_n = 8 if args.smoke else args.leaderboard_eval_envs
     n_lb_episodes = 2 if args.smoke else args.leaderboard_episodes
     leaderboard_freq = 5_000 if args.smoke else args.leaderboard_freq
-    lb_eval = _NormEvalVecEnv(
-      make_numpy(args.task, lb_eval_n, args.device, adversary=True,
-                 end_criterion=args.end_criterion))
+    # RAW tensor eval env -> GameplaySAC._eval_pair_tensor (on-device, no numpy
+    # VecEnv, no per-step host<->device sync; obs normalized via the live
+    # training normalizer inside _eval_pair_tensor -- no stats to inject).
+    lb_eval = make_tensor(args.task, lb_eval_n, args.device, adversary=True,
+                          end_criterion=args.end_criterion)
     akw.update(dict(
       ctrl_action_dim=s.ctrl_dim,   # env action = [ctrl, dstb]
       critic_learning_rate=args.critic_lr, dstb_learning_rate=args.dstb_lr,
@@ -320,13 +290,6 @@ def main():
 
   model = Algo("MlpPolicy", env, **akw)
 
-  # Two-player: inject the training normalizer's stats into the leaderboard eval
-  # env now that the TensorVecNormalize exists (see _NormEvalVecEnv).
-  if two_player and lb_eval is not None:
-    norm_fn = getattr(model.env, "normalize_obs_np", None)
-    if norm_fn is not None:
-      lb_eval.set_normalizer(norm_fn)
-      print("[leaderboard] eval env obs-normalized with training running stats")
   print(f"[recipe] net pi={pi_net} qf={qf_net} (ReLU) lr={args.lr} tau={args.tau} "
         f"tgt_upd={args.target_update_interval} ent={args.ent_coef} "
         f"gamma={args.gamma_init}->{args.gamma_end} ({args.gamma_schedule}) "
