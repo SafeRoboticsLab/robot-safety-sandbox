@@ -80,6 +80,12 @@ def _go2_payload_env_cfg(play: bool, payload: dict, randomize_odd: bool) -> Mana
   # The payload's 4 limited hinges add limit-constraints; base go2 njmax=300 overflows (~400 peak) and
   # mujoco-warp silently DROPS the excess. Raise the per-world constraint budget with margin.
   cfg.sim.njmax = 600
+  # STIFF-SPRING STABILITY: implicitfast integrates hinge STIFFNESS explicitly, so at the base go2
+  # dt=0.005 any payload stiffness ≳100 blows up (ω>2/dt), kicking the robot into instant termination
+  # (measured: k=300 -> |qvel|~2400, diverges). The `implicit` integrator does NOT help (springs are
+  # position-, not velocity-, dependent). Halve the physics dt: k=300 is stable at dt=0.002 with ~2.3x
+  # margin across the whole ODD, and — unlike armature — it preserves the slosh dynamics exactly.
+  cfg.sim.mujoco.timestep = 0.002
   _pin_twist(cfg, 0.0)   # zero command: the target is a stable stand
   return cfg
 
