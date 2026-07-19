@@ -3,23 +3,32 @@
 Variant of go2_stabilize whose robot carries a sloshy/rigid payload (ODD = rigidity x total-mass).
 Reuses go2_stabilize's stance_margins (payload-agnostic safety). Two-player (GameplaySAC via
 --adversary) is the intended learner, matching the best go2_stabilize result.
+
+Registers the ODD-randomized task + two fixed-ODD SPECIALISTS (light-rigid / heavy-sloshy) for the
+bifurcation check (does the optimal strategy flip dodge<->brace across the ODD?).
 """
 
 from __future__ import annotations
 
 from ..registry import TaskSpec, register
 
+_DESC = ("Go2 carrying a sloshy/rigid payload: return to a stable stand despite an adversarial base "
+         "force. The payload changes the optimal strategy (dodge when light/rigid vs brace-in-place "
+         "when heavy/sloshy).")
+
 
 def register_all() -> None:
   from robot_safety_sandbox.envs.go2_payload_stabilize.env_cfg import (
+    go2_payload_heavy_sloshy_env_cfg,
+    go2_payload_light_rigid_env_cfg,
     go2_payload_stabilize_env_cfg,
   )
   from robot_safety_sandbox.envs.go2_stabilize.env_cfg import stance_margins
 
-  register(TaskSpec(
-    task_id="go2_payload_stabilize", cfg_builder=go2_payload_stabilize_env_cfg,
-    margin_fn=stance_margins, default_algo="ReachAvoidPPO",
-    supports_adversary=True,
-    description="Go2 carrying a sloshy/rigid payload (ODD: rigidity x total-mass): return to a "
-                "stable stand despite an adversarial base force. The payload changes the optimal "
-                "strategy (dodge when light/rigid vs brace-in-place when heavy/sloshy)."))
+  common = dict(margin_fn=stance_margins, default_algo="ReachAvoidPPO", supports_adversary=True)
+  register(TaskSpec(task_id="go2_payload_stabilize", cfg_builder=go2_payload_stabilize_env_cfg,
+                    description="[ODD: rigidity x total-mass RANDOMIZED per-env] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_light_rigid", cfg_builder=go2_payload_light_rigid_env_cfg,
+                    description="[specialist: light+rigid ~ normal Go2] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_heavy_sloshy", cfg_builder=go2_payload_heavy_sloshy_env_cfg,
+                    description="[specialist: heavy+sloshy, brace regime] " + _DESC, **common))

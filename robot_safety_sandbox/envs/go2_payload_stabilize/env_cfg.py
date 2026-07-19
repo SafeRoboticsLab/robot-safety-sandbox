@@ -60,17 +60,40 @@ def _scope_joint_rewards_to_legs(cfg: ManagerBasedRlEnvCfg) -> None:
 # loads and stands; the ODD sweep varies stiffness ∈ [0, ~300] and total_mass ∈ [~0.5, ~6].
 DEFAULT_PAYLOAD = dict(n_layers=4, total_mass=3.0, stiffness=20.0, damping=0.05, profile="uniform")
 
-__all__ = ["go2_payload_stabilize_env_cfg", "stance_margins", "DEFAULT_PAYLOAD"]
+# Fixed-ODD SPECIALIST extremes for the bifurcation check (professor's cheap gate): does the optimal
+# strategy actually flip dodge↔brace across the ODD? Light+rigid ≈ a normal Go2 (dodge toward the pull);
+# heavy+sloshy should force a brace-in-place (moving would excite the slosh and topple).
+LIGHT_RIGID = dict(n_layers=4, total_mass=1.2, stiffness=300.0, damping=0.05, profile="uniform")
+HEAVY_SLOSHY = dict(n_layers=4, total_mass=7.0, stiffness=0.0, damping=0.05, profile="top_heavy")
+
+__all__ = ["go2_payload_stabilize_env_cfg", "go2_payload_light_rigid_env_cfg",
+           "go2_payload_heavy_sloshy_env_cfg", "stance_margins", "DEFAULT_PAYLOAD"]
 
 
-def go2_payload_stabilize_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+def _go2_payload_env_cfg(play: bool, payload: dict, randomize_odd: bool) -> ManagerBasedRlEnvCfg:
   cfg = unitree_go2_flat_env_cfg(play=play)
   # swap the base Go2 for the Go2+payload (same base_link / feet / leg joints ⇒ sensors & margins hold)
-  cfg.scene.entities["robot"] = get_go2_payload_robot_cfg(**DEFAULT_PAYLOAD)
+  cfg.scene.entities["robot"] = get_go2_payload_robot_cfg(**payload)
   _scope_joint_rewards_to_legs(cfg)   # keep dense joint rewards on the 12 legs, not the payload hinges
-  _add_odd_events(cfg)                 # per-env ODD: rigidity × total-mass
+  if randomize_odd:
+    _add_odd_events(cfg)              # per-env ODD: rigidity × total-mass
   # The payload's 4 limited hinges add limit-constraints; base go2 njmax=300 overflows (~400 peak) and
   # mujoco-warp silently DROPS the excess. Raise the per-world constraint budget with margin.
   cfg.sim.njmax = 600
   _pin_twist(cfg, 0.0)   # zero command: the target is a stable stand
   return cfg
+
+
+def go2_payload_stabilize_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """The ODD-conditioned task: payload rigidity × total-mass randomized per-env."""
+  return _go2_payload_env_cfg(play, DEFAULT_PAYLOAD, randomize_odd=True)
+
+
+def go2_payload_light_rigid_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Specialist: light + rigid payload (≈ normal Go2). Bifurcation-check extreme."""
+  return _go2_payload_env_cfg(play, LIGHT_RIGID, randomize_odd=False)
+
+
+def go2_payload_heavy_sloshy_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Specialist: heavy + sloshy top-heavy payload. Bifurcation-check extreme."""
+  return _go2_payload_env_cfg(play, HEAVY_SLOSHY, randomize_odd=False)
