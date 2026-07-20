@@ -1,7 +1,8 @@
 # Two-player reach-avoid SAC (GameplaySAC) on go2_stabilize.
 # Reference-faithful (safe_adaptation_dev/go2_pybullet_isaacs_br.yaml) + the fast
 # leaderboard config. This is the E042 recipe.
-#   python examples/train_sac.py --config configs/go2_stabilize_gameplaysac.yaml
+#   python examples/train.py --config configs/go2_stabilize_gameplaysac.yaml
+family: off_policy       # SAC family — the train.py router reads this
 task: go2_stabilize
 adversary: true              # -> GameplaySAC (2-player reach-avoid)
 num_envs: 1024

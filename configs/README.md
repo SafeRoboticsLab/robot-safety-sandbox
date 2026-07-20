@@ -1,15 +1,18 @@
 # Training configs
 
-Reusable experiment **recipes** for `examples/train.py` (PPO family) and
-`examples/train_sac.py` (SAC family). A recipe is a YAML file whose keys are the
-trainer's argparse flag names (the `dest`, e.g. `num_envs`, `gamma_schedule`).
+Reusable experiment **recipes** for `examples/train.py` — the router that
+dispatches to the on-policy (PPO) or off-policy (SAC) trainer. A recipe is a YAML
+file whose keys are the trainer's argparse flag names (the `dest`, e.g.
+`num_envs`, `gamma_schedule`), plus a reserved **`family:`** key
+(`on_policy` = PPO family, `off_policy` = SAC family) so the router knows which
+trainer to run — no `--family` needed on the CLI when a recipe carries it.
 
 ## How it works
 
 ```bash
-python examples/train_sac.py --config configs/go2_stabilize_gameplaysac.yaml
+python examples/train.py --config configs/go2_stabilize_gameplaysac.yaml   # family: off_policy in the yaml
 # override any single knob on top of the recipe:
-python examples/train_sac.py --config configs/go2_stabilize_gameplaysac.yaml --seed 3 --num-envs 2048
+python examples/train.py --config configs/go2_stabilize_gameplaysac.yaml --seed 3 --num-envs 2048
 ```
 
 Precedence: **argparse defaults  <  `--config` file  <  explicit CLI flags.** So a
@@ -51,10 +54,11 @@ experiment registry for the narrative of what was tried and why.
 
 ## Recipes here
 
-| file | trainer | what |
+| file | family | what |
 |---|---|---|
-| `go2_stabilize_gameplaysac.yaml` | `train_sac.py` | 2-player reach-avoid SAC (GameplaySAC), reference-faithful + fast leaderboard — the E042 config |
-| `go2_stabilize_reachavoidppo.yaml` | `train.py` | 1-player reach-avoid PPO (ReachAvoidPPO), the safety-PPO recipe |
+| `go2_stabilize_gameplaysac.yaml` | `off_policy` | 2-player reach-avoid SAC (GameplaySAC), reference-faithful + fast leaderboard — the E042 config |
+| `go2_stabilize_reachavoidppo.yaml` | `on_policy` | 1-player reach-avoid PPO (ReachAvoidPPO), the safety-PPO recipe |
+| `car_goal.yaml` | `on_policy` | ReachAvoidPPO — the car-goal tutorial recipe |
 
 Add new recipes freely. Keep **canonical** recipes here (committed); keep ad-hoc
 sweeps / scratch experiments out of the repo (they belong with the private

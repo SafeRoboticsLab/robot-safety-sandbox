@@ -74,13 +74,13 @@ See [`robot_safety_sandbox/margins.py`](../reference.md#margins) and
 
 ```bash
 # reach-avoid chain (single-player)
-python examples/train.py --task go2_gap_chain
+python examples/train.py --family on_policy --task go2_gap_chain
 # + worst-case force adversary (two-player reach-avoid -> GameplayPPO)
-python examples/train.py --task go2_gap_chain --adversary
+python examples/train.py --family on_policy --task go2_gap_chain --adversary
 
 # split test: reach-avoid vs avoid twins, per gap width
-python examples/train.py --task go2_gap_brake_or_jump_ra   --load runs/go2_gap_crossing/final_model.zip
-python examples/train.py --task go2_gap_brake_or_jump_avoid --load runs/go2_gap_crossing/final_model.zip
+python examples/train.py --family on_policy --task go2_gap_brake_or_jump_ra   --load runs/go2_gap_crossing/final_model.zip
+python examples/train.py --family on_policy --task go2_gap_brake_or_jump_avoid --load runs/go2_gap_crossing/final_model.zip
 
 # evaluate: value ordering + cross/fall rates, and the live safety filter
 python examples/eval_brake_or_jump_value.py --task go2_gap_brake_or_jump_ra_w30 \

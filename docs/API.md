@@ -166,24 +166,29 @@ like converged training in the reward curve.
 
 ## 7. Training
 
-Two entrypoints, split by algorithm family (both resolve the learner from
-*(task margins × `--adversary`)*):
+One router, two peer families. `examples/train.py` dispatches to the on-policy or
+off-policy trainer by a **required `--family`** — neither is the "main" one; they
+are equal ways to solve the same 2×2, and both resolve the learner from
+*(task margins × `--adversary`)*:
 
-- **`examples/train.py`** — the **PPO** family (SafetyPPO / ReachAvoidPPO /
-  IsaacsPPO / GameplayPPO).
-- **`examples/train_sac.py`** — the **SAC** family (SafetySAC / ReachAvoidSAC /
-  IsaacsSAC / GameplaySAC), the off-policy analog. Same `--task` / `--adversary`
-  resolution; two-player-only knobs (`ctrl_action_dim`, leaderboard, per-agent
-  LRs, adversary force ramp) are gated behind `--adversary`.
+| `--family` | trainer | learners |
+|---|---|---|
+| `on_policy` (alias `ppo`) | `examples/train_on_policy.py` | SafetyPPO / ReachAvoidPPO / IsaacsPPO / GameplayPPO |
+| `off_policy` (alias `sac`) | `examples/train_off_policy.py` | SafetySAC / ReachAvoidSAC / IsaacsSAC / GameplaySAC |
+
+`train.py` forwards every other flag verbatim to the chosen trainer (run
+`--family <f> --help` to see its options). The two trainers are also directly
+runnable — neither is subordinate. Set the family on the CLI or via `family:` in
+a `--config` YAML.
 
 ```bash
-# PPO family
-python examples/train.py     --task go2_gap_chain --terminal-type all      # reach-avoid PPO
-python examples/train.py     --task digit_stabilize_avoid --adversary      # two-player avoid (IsaacsPPO)
-# SAC family
-python examples/train_sac.py --task go2_stabilize                          # 1-player reach-avoid (ReachAvoidSAC)
-python examples/train_sac.py --task go2_stabilize --adversary --num-envs 1024   # 2-player reach-avoid (GameplaySAC)
-python examples/train_sac.py --task digit_stabilize_avoid --adversary      # two-player avoid (IsaacsSAC)
+# on-policy (PPO family)
+python examples/train.py --family on_policy  --task go2_gap_chain --terminal-type all    # reach-avoid PPO
+python examples/train.py --family ppo        --task digit_stabilize_avoid --adversary    # two-player avoid (IsaacsPPO)
+# off-policy (SAC family)
+python examples/train.py --family off_policy --task go2_stabilize                        # 1-player reach-avoid (ReachAvoidSAC)
+python examples/train.py --family sac        --task go2_stabilize --adversary --num-envs 1024  # 2-player reach-avoid (GameplaySAC)
+python examples/train.py --family sac        --task digit_stabilize_avoid --adversary    # two-player avoid (IsaacsSAC)
 ```
 
 - `--terminal-type {all,g}` — forwarded to reach-avoid learners; ignored (with a
@@ -193,19 +198,20 @@ python examples/train_sac.py --task digit_stabilize_avoid --adversary      # two
 - `--adversary` — two-player run; the learner is resolved by `algo_name`.
 - `--config <file.yaml>` — a reusable **recipe** (keys = flag names) that sets
   defaults; explicit CLI flags still override it (`argparse defaults < config <
-  CLI`). Every run also dumps its fully-resolved config to `<outdir>/config.yaml`
+  CLI`). A recipe carries its own `family:` key, so `--family` isn't needed on the
+  CLI. Every run also dumps its fully-resolved config to `<outdir>/config.yaml`
   (re-run with `--config <that file>` to reproduce). Recipes live in `configs/`.
 
 ```bash
-python examples/train_sac.py --config configs/go2_stabilize_gameplaysac.yaml         # the E042 recipe
-python examples/train_sac.py --config configs/go2_stabilize_gameplaysac.yaml --seed 3  # override one knob
+python examples/train.py --config configs/go2_stabilize_gameplaysac.yaml            # the E042 recipe (family: off_policy)
+python examples/train.py --config configs/go2_stabilize_gameplaysac.yaml --seed 3   # override one knob
 ```
 - **Env/task overrides** — a config `env_overrides:` dict (or `--env-override KEY=VAL`,
   repeatable) forwards params to the task's `cfg_builder`, overriding values baked into
   its registration (e.g. `gate_close_rate`, `bar_clearance`) — so a recipe can define the
   *environment* too, no argparse edit. An unaccepted key fails loud.
 
-`train_sac.py` exposes the reference-faithful controls (see safety_sb3
+The off-policy trainer exposes the reference-faithful controls (see safety_sb3
 [hyperparameters](https://saferoboticslab.github.io/safety-stable-baselines/hyperparameters/)):
 `--gamma-schedule` (discount anneal, default the discrete-jump schedule),
 `--min-alpha`, per-agent `--critic-lr/--dstb-lr/--ent-coef-lr/--dstb-ent-coef-lr`,
