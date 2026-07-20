@@ -6,7 +6,7 @@ family: off_policy           # SAC family — the train.py router reads this
 task: go2_payload_conditioned
 adversary: true              # -> GameplaySAC (2-player reach-avoid)
 num_envs: 512                # E014-specialist recipe (R = grad_steps*batch/num_envs = 32)
-steps: 20000000
+steps: 50000000              # prolonged: hold at gamma_end (0.9999) from 8M to 50M for convergence
 seed: 0
 out: results/go2_payload_runs
 wandb_project: odd-conditioned
@@ -21,9 +21,10 @@ batch_size: 4096
 gradient_steps: 4
 
 # --- discount annealing (reference discrete jumps) ---
-gamma_schedule: step         # 0.99 -> 0.999 @20% -> 0.9999 @40%, hold; resets alpha per jump
+gamma_schedule: step         # 0.99 -> 0.999 @4M -> 0.9999 @8M, then HOLD 0.9999 to 50M
 gamma_init: 0.99
 gamma_end: 0.9999
+gamma_period_frac: 0.08      # jump spacing = 8% of 50M => jumps at 4M and 8M (absolute)
 min_alpha: 0.001
 
 # --- fast leaderboard (tensor eval env; the throughput fix) + safe-rate eval ---
