@@ -103,6 +103,26 @@ def _scope_joint_rewards_to_legs(cfg: ManagerBasedRlEnvCfg) -> None:
     if isinstance(ac, SceneEntityCfg) and ac.name == "robot" and ac.joint_names == ".*":
       ac.joint_names = _LEG_JOINTS
 
+
+def _scope_joint_obs_to_legs(cfg: ManagerBasedRlEnvCfg) -> None:
+  """CRITICAL for the hidden-ODD premise: the inherited ``joint_pos``/``joint_vel`` obs terms default to
+  ALL robot joints, which would expose the 4 payload HINGE angles+velocities (8 dims) — i.e. the policy
+  would DIRECTLY SENSE the slosh state it is supposed to be blind to (no real sloshy payload has hinge
+  encoders). Re-scope the joint obs (actor AND critic) to the 12 legs, so the payload is observable ONLY
+  through its EFFECT on the base (IMU / projected-gravity) + leg loading — never measured directly. This
+  is what makes the ODD a genuinely hidden parameter (and theta genuinely informative, not redundant)."""
+  for group in ("actor", "critic"):
+    grp = cfg.observations.get(group)
+    if grp is None:
+      continue
+    for name in ("joint_pos", "joint_vel"):
+      term = grp.terms.get(name)
+      if term is None:
+        continue
+      p = dict(getattr(term, "params", None) or {})
+      p["asset_cfg"] = SceneEntityCfg("robot", joint_names=_LEG_JOINTS)
+      term.params = p
+
 # Default ODD operating point (rigidity × total-mass). A mid rigidity + moderate mass so the base task
 # loads and stands; the ODD sweep varies stiffness ∈ [0, ~300] and total_mass ∈ [~0.5, ~6].
 DEFAULT_PAYLOAD = dict(n_layers=4, total_mass=3.0, stiffness=20.0, damping=0.05, profile="uniform")
@@ -115,7 +135,8 @@ HEAVY_SLOSHY = dict(n_layers=4, total_mass=7.0, stiffness=0.0, damping=0.05, pro
 
 __all__ = ["go2_payload_stabilize_env_cfg", "go2_payload_light_rigid_env_cfg",
            "go2_payload_heavy_sloshy_env_cfg", "go2_payload_conditioned_env_cfg",
-           "go2_payload_blind_env_cfg", "stance_margins", "DEFAULT_PAYLOAD"]
+           "go2_payload_blind_env_cfg", "go2_payload_conditioned_light_rigid_env_cfg",
+           "go2_payload_conditioned_heavy_sloshy_env_cfg", "stance_margins", "DEFAULT_PAYLOAD"]
 
 
 def _go2_payload_env_cfg(play: bool, payload: dict, randomize_odd: bool) -> ManagerBasedRlEnvCfg:
@@ -123,6 +144,7 @@ def _go2_payload_env_cfg(play: bool, payload: dict, randomize_odd: bool) -> Mana
   # swap the base Go2 for the Go2+payload (same base_link / feet / leg joints ⇒ sensors & margins hold)
   cfg.scene.entities["robot"] = get_go2_payload_robot_cfg(**payload)
   _scope_joint_rewards_to_legs(cfg)   # keep dense joint rewards on the 12 legs, not the payload hinges
+  _scope_joint_obs_to_legs(cfg)       # payload is HIDDEN: no direct hinge-state obs, only its base effect
   if randomize_odd:
     _add_odd_events(cfg)              # per-env ODD: rigidity × total-mass
   # The payload's 4 limited hinges add limit-constraints; base go2 njmax=300 overflows (~400 peak) and
@@ -169,3 +191,20 @@ def go2_payload_light_rigid_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 def go2_payload_heavy_sloshy_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Specialist: heavy + sloshy top-heavy payload. Bifurcation-check extreme."""
   return _go2_payload_env_cfg(play, HEAVY_SLOSHY, randomize_odd=False)
+
+
+# EVAL-ONLY fixed-θ envs for the CONDITIONED policy (its obs is 57-dim): specialist physics + the θ
+# obs term, so θ is read live from the fixed payload and matches what the policy saw for that ODD.
+# The conditioned-vs-blind read-out evals: conditioned on these two, blind on the 55-dim specialists.
+def go2_payload_conditioned_light_rigid_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Conditioned policy at FIXED light-rigid θ (specialist physics + θ obs)."""
+  cfg = _go2_payload_env_cfg(play, LIGHT_RIGID, randomize_odd=False)
+  _add_odd_conditioning_obs(cfg)
+  return cfg
+
+
+def go2_payload_conditioned_heavy_sloshy_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Conditioned policy at FIXED heavy-sloshy θ (specialist physics + θ obs)."""
+  cfg = _go2_payload_env_cfg(play, HEAVY_SLOSHY, randomize_odd=False)
+  _add_odd_conditioning_obs(cfg)
+  return cfg
