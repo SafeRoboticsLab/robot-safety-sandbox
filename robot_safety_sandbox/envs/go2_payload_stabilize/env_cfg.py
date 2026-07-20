@@ -133,6 +133,12 @@ DEFAULT_PAYLOAD = dict(n_layers=4, total_mass=3.0, stiffness=20.0, damping=0.05,
 LIGHT_RIGID = dict(n_layers=4, total_mass=1.2, stiffness=300.0, damping=0.05, profile="uniform")
 HEAVY_SLOSHY = dict(n_layers=4, total_mass=7.0, stiffness=0.0, damping=0.05, profile="top_heavy")
 
+# OUT-OF-DISTRIBUTION stress points (OUTSIDE training: mass > 7.5 kg, stiffness > 300) for the OOD-
+# generalization test: does the conditioned policy, given the EXTRAPOLATED theta (payload_odd reads the
+# OOD model -> theta > 1), survive OOD payloads better than the blind policy (which gets no theta)?
+OOD_HEAVY_SLOSHY = dict(n_layers=4, total_mass=12.0, stiffness=0.0, damping=0.05, profile="top_heavy")
+OOD_HEAVY_RIGID = dict(n_layers=4, total_mass=12.0, stiffness=400.0, damping=0.05, profile="top_heavy")
+
 __all__ = ["go2_payload_stabilize_env_cfg", "go2_payload_light_rigid_env_cfg",
            "go2_payload_heavy_sloshy_env_cfg", "go2_payload_conditioned_env_cfg",
            "go2_payload_blind_env_cfg", "go2_payload_conditioned_light_rigid_env_cfg",
@@ -208,3 +214,64 @@ def go2_payload_conditioned_heavy_sloshy_env_cfg(play: bool = False) -> ManagerB
   cfg = _go2_payload_env_cfg(play, HEAVY_SLOSHY, randomize_odd=False)
   _add_odd_conditioning_obs(cfg)
   return cfg
+
+
+# OOD-generalization eval envs: fixed OOD physics; conditioned variants add the θ obs (which yields the
+# extrapolated θ>1 read from the OOD model). Conditioned evals on the *_conditioned_* envs, blind on the
+# plain OOD envs.
+def go2_payload_conditioned_ood_sloshy_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  cfg = _go2_payload_env_cfg(play, OOD_HEAVY_SLOSHY, randomize_odd=False)
+  _add_odd_conditioning_obs(cfg)
+  return cfg
+
+
+def go2_payload_ood_sloshy_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  return _go2_payload_env_cfg(play, OOD_HEAVY_SLOSHY, randomize_odd=False)
+
+
+def go2_payload_conditioned_ood_rigid_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  cfg = _go2_payload_env_cfg(play, OOD_HEAVY_RIGID, randomize_odd=False)
+  _add_odd_conditioning_obs(cfg)
+  return cfg
+
+
+def go2_payload_ood_rigid_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  return _go2_payload_env_cfg(play, OOD_HEAVY_RIGID, randomize_odd=False)
+
+
+# ── E017 HISTORY / introspective arm ────────────────────────────────────────────────────────────
+# The policy sees a FRAME-STACKED history of proprio+action (no theta) and must INFER the payload from
+# the dynamics it has felt — the deployable "introspective" alternative to a raw theta-input (which was
+# OOD-fragile: an extrapolated theta induced the wrong strategy). The stacked history is an IMPLICIT,
+# bounded, strategy-relevant embedding (RMA-style): the MLP encodes K past frames into its hidden state.
+HISTORY_K = 16   # frames of history (0.32 s @ 50 Hz); captures a chunk of the payload's slosh response
+
+
+def _set_obs_history(cfg: ManagerBasedRlEnvCfg, k: int) -> None:
+  for group in ("actor", "critic"):
+    g = cfg.observations.get(group)
+    if g is not None:
+      g.history_length = k
+
+
+def go2_payload_history_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """HISTORY arm (train): ODD randomized per-episode, NO theta, but a K-frame proprio+action history."""
+  cfg = _go2_payload_env_cfg(play, DEFAULT_PAYLOAD, randomize_odd=True)
+  _set_obs_history(cfg, HISTORY_K)
+  return cfg
+
+
+def go2_payload_history_light_rigid_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  cfg = _go2_payload_env_cfg(play, LIGHT_RIGID, randomize_odd=False); _set_obs_history(cfg, HISTORY_K); return cfg
+
+
+def go2_payload_history_heavy_sloshy_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  cfg = _go2_payload_env_cfg(play, HEAVY_SLOSHY, randomize_odd=False); _set_obs_history(cfg, HISTORY_K); return cfg
+
+
+def go2_payload_history_ood_sloshy_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  cfg = _go2_payload_env_cfg(play, OOD_HEAVY_SLOSHY, randomize_odd=False); _set_obs_history(cfg, HISTORY_K); return cfg
+
+
+def go2_payload_history_ood_rigid_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  cfg = _go2_payload_env_cfg(play, OOD_HEAVY_RIGID, randomize_odd=False); _set_obs_history(cfg, HISTORY_K); return cfg

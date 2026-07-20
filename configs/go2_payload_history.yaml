@@ -1,0 +1,32 @@
+# E017 HISTORY / introspective arm — GameplaySAC on go2_payload_history.
+# Frame-stacked proprio+action history (K=16, no theta): the policy INFERS the payload from the dynamics
+# it has felt (the deployable RMA-style alternative to a raw theta-input, which was OOD-fragile).
+# Same recipe as the conditioned/blind arms; buffer halved because the stacked obs is ~16x larger.
+#   python examples/train.py --config configs/go2_payload_history.yaml
+family: off_policy
+task: go2_payload_history
+adversary: true
+num_envs: 512
+steps: 50000000
+seed: 0
+out: results/go2_payload_runs
+wandb_project: odd-conditioned
+
+lr: 1.0e-4
+tau: 0.01
+target_update_interval: 2
+ent_coef: auto_0.1
+buffer_size: 500000          # halved: stacked history obs (K=16) is ~16x the single-frame obs
+batch_size: 4096
+gradient_steps: 4
+
+gamma_schedule: step         # 0.99 -> 0.999 @4M -> 0.9999 @8M, then HOLD 0.9999 to 50M
+gamma_init: 0.99
+gamma_end: 0.9999
+gamma_period_frac: 0.08
+min_alpha: 0.001
+
+leaderboard_freq: 2000000
+leaderboard_episodes: 3
+eval_rollouts: 100
+eval_freq: 2000000

@@ -21,8 +21,19 @@ def register_all() -> None:
   from robot_safety_sandbox.envs.go2_payload_stabilize.env_cfg import (
     go2_payload_blind_env_cfg,
     go2_payload_conditioned_env_cfg,
+    go2_payload_conditioned_heavy_sloshy_env_cfg,
+    go2_payload_conditioned_light_rigid_env_cfg,
+    go2_payload_conditioned_ood_rigid_env_cfg,
+    go2_payload_conditioned_ood_sloshy_env_cfg,
     go2_payload_heavy_sloshy_env_cfg,
     go2_payload_light_rigid_env_cfg,
+    go2_payload_ood_rigid_env_cfg,
+    go2_payload_ood_sloshy_env_cfg,
+    go2_payload_history_env_cfg,
+    go2_payload_history_light_rigid_env_cfg,
+    go2_payload_history_heavy_sloshy_env_cfg,
+    go2_payload_history_ood_sloshy_env_cfg,
+    go2_payload_history_ood_rigid_env_cfg,
     go2_payload_stabilize_env_cfg,
   )
   from robot_safety_sandbox.envs.go2_stabilize.env_cfg import stance_margins
@@ -41,3 +52,32 @@ def register_all() -> None:
                     description="[specialist: light+rigid ~ normal Go2] " + _DESC, **common))
   register(TaskSpec(task_id="go2_payload_heavy_sloshy", cfg_builder=go2_payload_heavy_sloshy_env_cfg,
                     description="[specialist: heavy+sloshy, brace regime] " + _DESC, **common))
+  # EVAL-ONLY: the conditioned policy (57-dim obs) at each fixed-ODD extreme, for the read-out.
+  register(TaskSpec(task_id="go2_payload_conditioned_light_rigid",
+                    cfg_builder=go2_payload_conditioned_light_rigid_env_cfg,
+                    description="[eval: conditioned policy @ fixed light-rigid theta] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_conditioned_heavy_sloshy",
+                    cfg_builder=go2_payload_conditioned_heavy_sloshy_env_cfg,
+                    description="[eval: conditioned policy @ fixed heavy-sloshy theta] " + _DESC, **common))
+  # OOD-generalization eval tasks (mass 12kg > 7.5 max; rigid variant stiffness 400 > 300 max).
+  register(TaskSpec(task_id="go2_payload_conditioned_ood_sloshy",
+                    cfg_builder=go2_payload_conditioned_ood_sloshy_env_cfg,
+                    description="[eval OOD: conditioned @ 12kg sloshy, extrapolated theta] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_ood_sloshy", cfg_builder=go2_payload_ood_sloshy_env_cfg,
+                    description="[eval OOD: blind @ 12kg sloshy] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_conditioned_ood_rigid",
+                    cfg_builder=go2_payload_conditioned_ood_rigid_env_cfg,
+                    description="[eval OOD: conditioned @ 12kg rigid k=400, extrapolated theta] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_ood_rigid", cfg_builder=go2_payload_ood_rigid_env_cfg,
+                    description="[eval OOD: blind @ 12kg rigid k=400] " + _DESC, **common))
+  # E017 HISTORY arm: frame-stacked proprio+action history, no theta -> infer the payload from dynamics.
+  register(TaskSpec(task_id="go2_payload_history", cfg_builder=go2_payload_history_env_cfg,
+                    description="[history: ODD randomized, K-frame proprio+action history, no theta] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_history_light_rigid", cfg_builder=go2_payload_history_light_rigid_env_cfg,
+                    description="[eval history @ light-rigid] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_history_heavy_sloshy", cfg_builder=go2_payload_history_heavy_sloshy_env_cfg,
+                    description="[eval history @ heavy-sloshy] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_history_ood_sloshy", cfg_builder=go2_payload_history_ood_sloshy_env_cfg,
+                    description="[eval history OOD @ 12kg sloshy] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_history_ood_rigid", cfg_builder=go2_payload_history_ood_rigid_env_cfg,
+                    description="[eval history OOD @ 12kg rigid k=400] " + _DESC, **common))
