@@ -1,0 +1,31 @@
+# E015 BLIND arm — two-player reach-avoid SAC (GameplaySAC) on go2_payload_blind.
+# ODD (rigidity x total-mass) randomized PER-EPISODE; theta HIDDEN (identical env to the conditioned
+# arm, only the obs group differs). The worst-case baseline for the conditioned policy.
+#   python examples/train.py --config configs/go2_payload_blind.yaml
+family: off_policy
+task: go2_payload_blind
+adversary: true
+num_envs: 512
+steps: 20000000
+seed: 0
+out: results/go2_payload_runs
+wandb_project: odd-conditioned
+
+# --- SAC hypers (identical to the conditioned arm — the ONLY difference is theta in the obs) ---
+lr: 1.0e-4
+tau: 0.01
+target_update_interval: 2
+ent_coef: auto_0.1
+buffer_size: 1000000
+batch_size: 4096
+gradient_steps: 4
+
+gamma_schedule: step
+gamma_init: 0.99
+gamma_end: 0.9999
+min_alpha: 0.001
+
+leaderboard_freq: 2000000
+leaderboard_episodes: 3
+eval_rollouts: 100
+eval_freq: 2000000

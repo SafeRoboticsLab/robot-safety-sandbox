@@ -78,14 +78,17 @@ def _add_odd_conditioning_obs(cfg: ManagerBasedRlEnvCfg) -> None:
 
 
 def _add_odd_events(cfg: ManagerBasedRlEnvCfg) -> None:
-  """Randomize the payload ODD (rigidity × total-mass) PER-ENV at startup — one θ per env, so the
-  parallel envs sample the ODD distribution. Read back live from model.jnt_stiffness / body_mass."""
+  """Randomize the payload ODD (rigidity × total-mass) PER-EPISODE at reset — a FRESH θ each episode,
+  so training sees a continuum of the ODD distribution (not just num_envs fixed points), and the
+  conditioned policy is pressured to interpolate across θ. (Professor rec: θ committed per episode.)
+  Both ops read from the DEFAULT model field each reset (abs sets, scale multiplies the default — no
+  compounding drift; verified in dr/_core.py). Read back live from model.jnt_stiffness / body_mass."""
   cfg.events["payload_rigidity"] = EventTermCfg(   # RIGIDITY axis (hinge stiffness, shared per env)
-    func=dr.joint_stiffness, mode="startup",
+    func=dr.joint_stiffness, mode="reset",
     params={"asset_cfg": SceneEntityCfg("robot", joint_names="payload_j.*"),
             "ranges": RIGIDITY_RANGE, "operation": "abs", "shared_random": True})
-  cfg.events["payload_mass"] = EventTermCfg(        # TOTAL-MASS axis (one scale per env, all blocks)
-    func=dr.body_mass, mode="startup",
+  cfg.events["payload_mass"] = EventTermCfg(        # TOTAL-MASS axis (one scale of DEFAULT per episode)
+    func=dr.body_mass, mode="reset",
     params={"asset_cfg": SceneEntityCfg("robot", body_names="payload_.*"),
             "ranges": MASS_SCALE_RANGE, "operation": "scale", "shared_random": True})
 
