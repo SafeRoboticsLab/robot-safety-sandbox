@@ -19,6 +19,8 @@ _DESC = ("Go2 carrying a sloshy/rigid payload: return to a stable stand despite 
 
 def register_all() -> None:
   from robot_safety_sandbox.envs.go2_payload_stabilize.env_cfg import (
+    go2_payload_blind_env_cfg,
+    go2_payload_conditioned_env_cfg,
     go2_payload_heavy_sloshy_env_cfg,
     go2_payload_light_rigid_env_cfg,
     go2_payload_stabilize_env_cfg,
@@ -28,6 +30,13 @@ def register_all() -> None:
   common = dict(margin_fn=stance_margins, default_algo="ReachAvoidPPO", supports_adversary=True)
   register(TaskSpec(task_id="go2_payload_stabilize", cfg_builder=go2_payload_stabilize_env_cfg,
                     description="[ODD: rigidity x total-mass RANDOMIZED per-env] " + _DESC, **common))
+  # E008c-style A/B on Go2: one CONDITIONED policy (sees θ) vs one BLIND policy (does not), same
+  # ODD-randomized env. Does the conditioned policy match BOTH specialists' strategies (dodge for
+  # light-rigid θ, brace for heavy-sloshy θ) while the blind one is stuck on a single worst-case?
+  register(TaskSpec(task_id="go2_payload_conditioned", cfg_builder=go2_payload_conditioned_env_cfg,
+                    description="[ODD randomized + theta EXPOSED to actor+critic] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_blind", cfg_builder=go2_payload_blind_env_cfg,
+                    description="[ODD randomized, theta HIDDEN — blind baseline] " + _DESC, **common))
   register(TaskSpec(task_id="go2_payload_light_rigid", cfg_builder=go2_payload_light_rigid_env_cfg,
                     description="[specialist: light+rigid ~ normal Go2] " + _DESC, **common))
   register(TaskSpec(task_id="go2_payload_heavy_sloshy", cfg_builder=go2_payload_heavy_sloshy_env_cfg,

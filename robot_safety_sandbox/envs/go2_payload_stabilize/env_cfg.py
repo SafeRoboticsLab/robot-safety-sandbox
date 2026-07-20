@@ -16,9 +16,13 @@ the payload joint stiffness / block masses).
 
 from __future__ import annotations
 
+import mujoco
+import torch
+
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
 from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 
 from robot_safety_sandbox.envs.assets_go2_payload import get_go2_payload_robot_cfg
@@ -31,6 +35,46 @@ _LEG_JOINTS = "^(FL|FR|RL|RR)_.*_joint$"
 # ── THE ODD distribution (per-env, sampled at startup) — rigidity × total-mass ──────────────────
 RIGIDITY_RANGE = (0.0, 300.0)     # payload hinge stiffness: 0 = water-like slosh … 300 ≈ rigid box
 MASS_SCALE_RANGE = (0.4, 2.5)     # × DEFAULT_PAYLOAD total_mass (3 kg) ⇒ ~[1.2, 7.5] kg
+
+# ── ODD-CONDITIONING observation (the oracle θ signal) ──────────────────────────────────────────
+# θ = (rigidity, total-mass), the two randomized ODD axes, normalized to [-1, 1] per-env. Read LIVE
+# from the (per-env) model that the startup events wrote: payload-hinge ``jnt_stiffness`` and summed
+# payload ``body_mass``. The CONDITIONED policy sees θ; the BLIND policy does not (identical env
+# otherwise) — the E008c-style A/B on Go2. Normalization spans match the randomization ranges so a
+# fully-slosh light payload → ≈-1 and a rigid heavy one → ≈+1 on each axis.
+_STIFF_LO, _STIFF_HI = RIGIDITY_RANGE                          # rigidity axis span
+_MASS_LO, _MASS_HI = 3.0 * MASS_SCALE_RANGE[0], 3.0 * MASS_SCALE_RANGE[1]  # total-mass span ~[1.2,7.5]
+
+
+def _resolve_payload_odd_idx(env) -> tuple[torch.Tensor, torch.Tensor]:
+  """Global model column indices of the payload hinge joints and payload bodies, by NAME (robust to
+  model layout). Payload joints ``robot/payload_j{1..4}``; bodies ``robot/payload_mount`` + ``_b{1..4}``
+  (block_0's mass rides on the mount body)."""
+  m = env.sim.mj_model
+  jids = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"robot/payload_j{i}") for i in range(1, 5)]
+  bnames = ["robot/payload_mount"] + [f"robot/payload_b{i}" for i in range(1, 5)]
+  bids = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, n) for n in bnames]
+  dev = env.device
+  return (torch.tensor([j for j in jids if j >= 0], device=dev, dtype=torch.long),
+          torch.tensor([b for b in bids if b >= 0], device=dev, dtype=torch.long))
+
+
+def payload_odd(env) -> torch.Tensor:
+  """Per-env ODD θ=(rigidity, total-mass) normalized to [-1,1]. Shape (num_envs, 2)."""
+  if getattr(env, "_payload_odd_jidx", None) is None:
+    env._payload_odd_jidx, env._payload_odd_bidx = _resolve_payload_odd_idx(env)
+  stiff = env.sim.model.jnt_stiffness[:, env._payload_odd_jidx].mean(dim=1)   # hinge spring = rigidity
+  mass = env.sim.model.body_mass[:, env._payload_odd_bidx].sum(dim=1)          # total payload mass
+  s = 2.0 * (stiff - _STIFF_LO) / (_STIFF_HI - _STIFF_LO) - 1.0
+  m = 2.0 * (mass - _MASS_LO) / (_MASS_HI - _MASS_LO) - 1.0
+  return torch.stack([s, m], dim=1)
+
+
+def _add_odd_conditioning_obs(cfg: ManagerBasedRlEnvCfg) -> None:
+  """Expose θ to BOTH the actor (so the policy adapts strategy per-ODD) and the critic (so the value
+  is θ-correct). Separate cfg instances per group (the manager owns per-term state)."""
+  for group in ("actor", "critic"):
+    cfg.observations[group].terms["payload_odd"] = ObservationTermCfg(func=payload_odd)
 
 
 def _add_odd_events(cfg: ManagerBasedRlEnvCfg) -> None:
@@ -67,7 +111,8 @@ LIGHT_RIGID = dict(n_layers=4, total_mass=1.2, stiffness=300.0, damping=0.05, pr
 HEAVY_SLOSHY = dict(n_layers=4, total_mass=7.0, stiffness=0.0, damping=0.05, profile="top_heavy")
 
 __all__ = ["go2_payload_stabilize_env_cfg", "go2_payload_light_rigid_env_cfg",
-           "go2_payload_heavy_sloshy_env_cfg", "stance_margins", "DEFAULT_PAYLOAD"]
+           "go2_payload_heavy_sloshy_env_cfg", "go2_payload_conditioned_env_cfg",
+           "go2_payload_blind_env_cfg", "stance_margins", "DEFAULT_PAYLOAD"]
 
 
 def _go2_payload_env_cfg(play: bool, payload: dict, randomize_odd: bool) -> ManagerBasedRlEnvCfg:
@@ -96,6 +141,20 @@ def _go2_payload_env_cfg(play: bool, payload: dict, randomize_odd: bool) -> Mana
 
 def go2_payload_stabilize_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """The ODD-conditioned task: payload rigidity × total-mass randomized per-env."""
+  return _go2_payload_env_cfg(play, DEFAULT_PAYLOAD, randomize_odd=True)
+
+
+def go2_payload_conditioned_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """CONDITIONED arm: ODD randomized per-env AND θ=(rigidity, total-mass) exposed to actor+critic —
+  one policy that can adapt strategy per-ODD (the oracle upper bound of the E008c A/B)."""
+  cfg = _go2_payload_env_cfg(play, DEFAULT_PAYLOAD, randomize_odd=True)
+  _add_odd_conditioning_obs(cfg)
+  return cfg
+
+
+def go2_payload_blind_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """BLIND arm: ODD randomized per-env, θ NOT exposed (identical to go2_payload_stabilize) — one
+  policy that must worst-case across the ODD. The control baseline for the conditioned arm."""
   return _go2_payload_env_cfg(play, DEFAULT_PAYLOAD, randomize_odd=True)
 
 
