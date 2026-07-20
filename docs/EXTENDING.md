@@ -22,7 +22,7 @@ register(TaskSpec(
 ))
 ```
 
-Then `examples/train.py --task my_task` (safety) or `train_nominal.py`
+Then `examples/train.py --family on_policy --task my_task` (safety) or `train_nominal.py`
 (nominal) just work; `make_tensor("my_task", num_envs=2048)` builds the
 GPU-resident env.
 

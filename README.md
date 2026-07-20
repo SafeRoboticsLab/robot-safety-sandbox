@@ -77,7 +77,7 @@ the reward curve.
    landing → crossing → chain pipeline seeds rare-win skills.
 2. Compose `margin_fn` from `margins.py` (or add new terms there).
 3. `register(TaskSpec(...))` in `tasks/<your_task>.py`.
-4. Train with `examples/train.py --task <id>`; verify curricula CLIMB in wandb.
+4. Train with `examples/train.py --family on_policy --task <id>`; verify curricula CLIMB in wandb.
 
 ## Extending
 

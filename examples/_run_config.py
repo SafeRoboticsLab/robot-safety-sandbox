@@ -1,4 +1,4 @@
-"""Shared ``--config`` plumbing for the trainers (train.py / train_sac.py).
+"""Shared ``--config`` plumbing for the trainers (train_on_policy.py / train_off_policy.py).
 
 A YAML config file sets argparse DEFAULTS, so precedence is:
 
@@ -73,6 +73,7 @@ def merge_config(parser):
             raise SystemExit(
                 f"[config] '{_ENV_OVERRIDES_KEY}' must be a mapping, got "
                 f"{type(cfg_env_overrides).__name__}")
+        cfg.pop("family", None)   # reserved: consumed by the train.py router, not a trainer arg
         valid = {a.dest for a in parser._actions if a.dest not in ("help", "config")}
         bad = [k for k in cfg if k not in valid]
         if bad:

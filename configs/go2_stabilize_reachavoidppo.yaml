@@ -2,6 +2,7 @@
 # recipe (obs-normalized, fixed LR, KL early-stop, capped action std).
 #   python examples/train.py --config configs/go2_stabilize_reachavoidppo.yaml
 # (add `adversary: true` for the two-player GameplayPPO variant.)
+family: on_policy        # PPO family — the train.py router reads this
 task: go2_stabilize
 num_envs: 1024
 steps: 100000000

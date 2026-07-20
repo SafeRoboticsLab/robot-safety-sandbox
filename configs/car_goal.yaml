@@ -1,5 +1,6 @@
 # Car-goal reach-avoid (ReachAvoidPPO) — the tutorial recipe.
 #   python examples/train.py --config configs/car_goal.yaml
+family: on_policy        # PPO family — the train.py router reads this
 task: car_goal
 num_envs: 1024
 steps: 25000000

@@ -31,8 +31,8 @@ reach-avoid instance — see the [API guide](../API.md#5-marginspy).
 ## Run it
 
 ```bash
-python examples/train.py --task digit_stabilize_avoid --adversary   # -> IsaacsPPO (two-player avoid)
-python examples/train.py --task digit_stabilize                      # reach-avoid, single-player
+python examples/train.py --family on_policy --task digit_stabilize_avoid --adversary   # -> IsaacsPPO (two-player avoid)
+python examples/train.py --family on_policy --task digit_stabilize                      # reach-avoid, single-player
 ```
 
 ```python

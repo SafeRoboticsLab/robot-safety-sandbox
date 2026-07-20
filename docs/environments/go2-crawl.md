@@ -35,8 +35,8 @@ exists (the closing gate), not on the static bar.
 ## Run it
 
 ```bash
-python examples/train.py --task go2_crawl_gate_ra        # reach-avoid, closing gate
-python examples/train.py --task go2_crawl_gate_avoid     # avoid control
+python examples/train.py --family on_policy --task go2_crawl_gate_ra        # reach-avoid, closing gate
+python examples/train.py --family on_policy --task go2_crawl_gate_avoid     # avoid control
 ```
 
 ```python
