@@ -25,6 +25,8 @@ def register_all() -> None:
     go2_payload_conditioned_light_rigid_env_cfg,
     go2_payload_conditioned_ood_rigid_env_cfg,
     go2_payload_conditioned_ood_sloshy_env_cfg,
+    go2_payload_descent_env_cfg,
+    descent_margins,
     go2_payload_heavy_sloshy_env_cfg,
     go2_payload_light_rigid_env_cfg,
     go2_payload_ood_rigid_env_cfg,
@@ -48,6 +50,15 @@ def register_all() -> None:
                     description="[ODD randomized + theta EXPOSED to actor+critic] " + _DESC, **common))
   register(TaskSpec(task_id="go2_payload_blind", cfg_builder=go2_payload_blind_env_cfg,
                     description="[ODD randomized, theta HIDDEN — blind baseline] " + _DESC, **common))
+  # SOFT-DESCENT / lie-down FALLBACK skill (its own reach-avoid margins, NOT stance_margins): from
+  # standing, lower to a soft belly-down rest — reach low/level/slow WHILE keeping non-foot ground
+  # contact gentle (contact-force safe set). Blind ODD-randomized env (robust to the hidden payload).
+  # supports_adversary=True so it CAN take a pull later, but it is trained single-player first.
+  register(TaskSpec(task_id="go2_payload_descent", cfg_builder=go2_payload_descent_env_cfg,
+                    margin_fn=descent_margins, default_algo="ReachAvoidPPO", supports_adversary=True,
+                    description="[soft-descent fallback: reach a soft belly-down rest, contact-force safe "
+                                "set] Go2 (hidden randomized payload) lowers from standing to a low/level/"
+                                "slow belly-down rest while keeping non-foot ground contact gentle."))
   register(TaskSpec(task_id="go2_payload_light_rigid", cfg_builder=go2_payload_light_rigid_env_cfg,
                     description="[specialist: light+rigid ~ normal Go2] " + _DESC, **common))
   register(TaskSpec(task_id="go2_payload_heavy_sloshy", cfg_builder=go2_payload_heavy_sloshy_env_cfg,
@@ -81,3 +92,11 @@ def register_all() -> None:
                     description="[eval history OOD @ 12kg sloshy] " + _DESC, **common))
   register(TaskSpec(task_id="go2_payload_history_ood_rigid", cfg_builder=go2_payload_history_ood_rigid_env_cfg,
                     description="[eval history OOD @ 12kg rigid k=400] " + _DESC, **common))
+  # E019 break-boundary sweep: find where the trained arms FALL. mass sweep x {blind,conditioned,history}.
+  from functools import partial
+  from robot_safety_sandbox.envs.go2_payload_stabilize.env_cfg import sweep_env_cfg
+  for _m in (8, 12, 16, 20, 25):
+    for _o in ("blind", "conditioned", "history"):
+      register(TaskSpec(task_id=f"go2_payload_sweep_{_o}_{_m}",
+                        cfg_builder=partial(sweep_env_cfg, mass=float(_m), stiffness=0.0, obs=_o),
+                        description=f"[sweep: {_o} @ {_m}kg sloshy] " + _DESC, **common))

@@ -139,10 +139,45 @@ HEAVY_SLOSHY = dict(n_layers=4, total_mass=7.0, stiffness=0.0, damping=0.05, pro
 OOD_HEAVY_SLOSHY = dict(n_layers=4, total_mass=12.0, stiffness=0.0, damping=0.05, profile="top_heavy")
 OOD_HEAVY_RIGID = dict(n_layers=4, total_mass=12.0, stiffness=400.0, damping=0.05, profile="top_heavy")
 
+
+# ── SOFT-DESCENT / lie-down REACH-AVOID margins ───────────────────────────────────────────────────
+# A FALLBACK skill (not the stabilize adversary game): from standing, the Go2 lowers itself to a soft
+# belly-down rest. TARGET l = a low, level, slow pose; SAFE-SET g = keep the non-foot ground contact
+# GENTLE (a settle registers ~60-70 N, a slam ~4700 N — so F_SAFE=200 N cleanly separates soft from
+# hard) AND stay off the robot's side/back (up > -0.3). Payload-agnostic; reads the base state
+# (like stance_margins) plus the inherited ``nonfoot_ground_touch`` contact sensor.
+F_SAFE, F_SCALE = 200.0, 200.0     # settle ~60-70N safe, slam ~4700N unsafe -> 200N separates
+H_LIE, HS       = 0.14, 0.06       # target base height for the lie-down
+V_TOL, VS       = 0.30, 0.30       # linear speed tolerance at rest
+W_TOL, WS       = 0.60, 0.60       # angular speed tolerance at rest
+UP_MIN, US      = 0.50, 0.50       # must stay level-ish (belly-down, not on side/inverted)
+
+
+def descent_margins(env):
+  """(g, l): soft-contact + level safety, low/slow/level lie-down target. Mirrors ``stance_margins``'s
+  base-state API and reads the ``nonfoot_ground_touch`` contact sensor for the contact-force safe set."""
+  d = env.scene["robot"].data
+  s = env.scene["nonfoot_ground_touch"]
+  fh = s.data.force_history if s.data.force_history is not None else s.data.force
+  force = torch.norm(fh, dim=-1).flatten(1).amax(1)          # per-env max non-foot ground force
+  up = -d.projected_gravity_b[:, 2]                          # 1 = upright/level, 0 = on side, -1 = inverted
+  base_z = d.root_link_pos_w[:, 2]
+  v_b = torch.linalg.norm(d.root_link_lin_vel_b, dim=1)
+  w_b = torch.linalg.norm(d.root_link_ang_vel_b, dim=1)
+  # SAFE: contact force <= F_SAFE AND not tipped past its side (up > -0.3).
+  g = torch.minimum((F_SAFE - force) / F_SCALE, (up + 0.3) / 1.0)
+  # TARGET: base low, linear + angular speed small, still belly-down level.
+  l = torch.minimum(
+    torch.minimum((H_LIE - base_z) / HS, (V_TOL - v_b) / VS),
+    torch.minimum((W_TOL - w_b) / WS, (up - UP_MIN) / US))
+  return g, l
+
+
 __all__ = ["go2_payload_stabilize_env_cfg", "go2_payload_light_rigid_env_cfg",
            "go2_payload_heavy_sloshy_env_cfg", "go2_payload_conditioned_env_cfg",
            "go2_payload_blind_env_cfg", "go2_payload_conditioned_light_rigid_env_cfg",
-           "go2_payload_conditioned_heavy_sloshy_env_cfg", "stance_margins", "DEFAULT_PAYLOAD"]
+           "go2_payload_conditioned_heavy_sloshy_env_cfg", "go2_payload_descent_env_cfg",
+           "stance_margins", "descent_margins", "DEFAULT_PAYLOAD"]
 
 
 def _go2_payload_env_cfg(play: bool, payload: dict, randomize_odd: bool) -> ManagerBasedRlEnvCfg:
@@ -187,6 +222,16 @@ def go2_payload_blind_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """BLIND arm: ODD randomized per-env, θ NOT exposed (identical to go2_payload_stabilize) — one
   policy that must worst-case across the ODD. The control baseline for the conditioned arm."""
   return _go2_payload_env_cfg(play, DEFAULT_PAYLOAD, randomize_odd=True)
+
+
+def go2_payload_descent_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """SOFT-DESCENT / lie-down FALLBACK: from standing, lower to a soft belly-down rest. Reuses the BLIND
+  payload cfg (ODD rigidity × total-mass randomized PER-EPISODE and HIDDEN — blind 47-dim obs) so the
+  descent is robust to the payload WITHOUT seeing it. Identical env to go2_payload_blind (zero-command
+  stance base + hidden ODD); only the reach-avoid MARGINS differ (``descent_margins`` — soft-contact
+  safe set + low/slow/level target — vs ``stance_margins``). The ``nonfoot_ground_touch`` contact
+  sensor that ``descent_margins`` reads is inherited from the go2 velocity base and preserved here."""
+  return go2_payload_blind_env_cfg(play=play)
 
 
 def go2_payload_light_rigid_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
@@ -275,3 +320,18 @@ def go2_payload_history_ood_sloshy_env_cfg(play: bool = False) -> ManagerBasedRl
 
 def go2_payload_history_ood_rigid_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg = _go2_payload_env_cfg(play, OOD_HEAVY_RIGID, randomize_odd=False); _set_obs_history(cfg, HISTORY_K); return cfg
+
+
+# ── E019 BREAK-BOUNDARY sweep ────────────────────────────────────────────────────────────────────
+# Parameterized fixed-ODD eval env for the mass/rigidity sweep: find where the trained arms FALL. Built
+# at the target mass (model + inertia consistent — no runtime-override blowup). obs selects the arm's
+# input surface (blind 47 / conditioned +theta 49 / history stacked 752).
+def sweep_env_cfg(play: bool = False, mass: float = 12.0, stiffness: float = 0.0,
+                  profile: str = "top_heavy", obs: str = "blind") -> ManagerBasedRlEnvCfg:
+  payload = dict(n_layers=4, total_mass=mass, stiffness=stiffness, damping=0.05, profile=profile)
+  cfg = _go2_payload_env_cfg(play, payload, randomize_odd=False)
+  if obs == "conditioned":
+    _add_odd_conditioning_obs(cfg)
+  elif obs == "history":
+    _set_obs_history(cfg, HISTORY_K)
+  return cfg

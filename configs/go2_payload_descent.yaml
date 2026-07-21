@@ -1,0 +1,36 @@
+# SOFT-DESCENT / lie-down FALLBACK — single-player reach-avoid SAC (ReachAvoidSAC) on go2_payload_descent.
+# From standing, the Go2 lowers itself to a soft belly-down rest: TARGET = low/level/slow pose,
+# SAFE = keep the non-foot ground contact gentle (contact-force safe set) + stay off its side/back.
+# ODD (rigidity x total-mass) randomized PER-EPISODE and HIDDEN (blind 47-dim obs) so the fallback is
+# robust to the payload without seeing it. SINGLE-PLAYER first (no adversary); the task supports_adversary
+# so a pull can be added later. Shorter than the 50M stabilize runs (fallback is an easier skill).
+#   python examples/train.py --config configs/go2_payload_descent.yaml
+family: off_policy
+task: go2_payload_descent
+adversary: false            # single-player: train the fallback skill on its own first
+end_criterion: reach-avoid  # terminate on reach (g>=0 AND l>=0): lie down and stop
+num_envs: 512
+steps: 15000000             # shorter run: fallback skill, hold at gamma_end (0.9999) from 8M to 15M
+seed: 0
+out: results/go2_payload_runs
+wandb_project: odd-conditioned
+
+# --- SAC hypers (mirror the blind/conditioned stabilize arms) ---
+lr: 1.0e-4
+tau: 0.01
+target_update_interval: 2
+ent_coef: auto_0.1
+buffer_size: 1000000
+batch_size: 4096
+gradient_steps: 4
+
+gamma_schedule: step         # 0.99 -> 0.999 @4M -> 0.9999 @8M, then HOLD 0.9999 to 15M
+gamma_init: 0.99
+gamma_end: 0.9999
+gamma_period_frac: 0.267     # jump spacing = 26.7% of 15M => jumps at ~4M and ~8M (absolute, as the 50M runs)
+min_alpha: 0.001
+
+leaderboard_freq: 2000000    # two-player-only knob; kept for parity (single-player run ignores it)
+leaderboard_episodes: 3
+eval_rollouts: 100
+eval_freq: 2000000
