@@ -18,7 +18,7 @@ from typing import Callable
 import mujoco
 import numpy as np
 
-from robot_safety_sandbox.envs.assets_digit.digit_constants import (
+from robot_safety_sandbox.envs.assets.digit.digit_constants import (
   _UPRIGHT_JOINT_OVERRIDES,
   get_spec_upright,
   get_spec_upright_calibrated,

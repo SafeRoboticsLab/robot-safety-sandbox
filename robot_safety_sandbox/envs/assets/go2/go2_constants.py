@@ -4,8 +4,6 @@ from pathlib import Path
 
 import mujoco
 
-from pathlib import Path as _P
-ZOO_ENVS_PATH = _P(__file__).resolve().parents[1]
 from mjlab.actuator import BuiltinPositionActuatorCfg
 from mjlab.entity import EntityArticulationInfoCfg, EntityCfg
 from mjlab.utils.actuator import ElectricActuator, reflected_inertia
@@ -16,9 +14,7 @@ from mjlab.utils.spec_config import CollisionCfg
 # MJCF and assets.
 ##
 
-GO2_XML: Path = (
-  ZOO_ENVS_PATH / "assets_go2" / "xmls" / "go2.xml"
-)
+GO2_XML: Path = Path(__file__).resolve().parent / "xmls" / "go2.xml"
 assert GO2_XML.exists()
 
 

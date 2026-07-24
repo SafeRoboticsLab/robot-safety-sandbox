@@ -2,8 +2,8 @@
 
 Vendored from the mjlab fork (MjlabSafety_Digit
 ``src/mjlab/asset_zoo/robots/digit_v3/digit_constants.py``); the MJCF + meshes
-live in the zoo under ``envs/assets_digit/xmls/`` (same pattern as
-``envs/assets_go2``). Only stock mjlab APIs are used.
+live in the zoo under ``envs/assets/digit/xmls/`` (same pattern as
+``envs/assets/go2``). Only stock mjlab APIs are used.
 """
 
 import dataclasses
@@ -22,9 +22,7 @@ from mjlab.utils.spec_config import CollisionCfg
 # MJCF and assets.
 ##
 
-ZOO_ENVS_PATH = Path(__file__).resolve().parents[1]
-
-DIGIT_XML: Path = ZOO_ENVS_PATH / "assets_digit" / "xmls" / "digit.xml"
+DIGIT_XML: Path = Path(__file__).resolve().parent / "xmls" / "digit.xml"
 assert DIGIT_XML.exists()
 
 

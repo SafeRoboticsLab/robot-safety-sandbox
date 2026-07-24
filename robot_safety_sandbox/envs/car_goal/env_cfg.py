@@ -36,7 +36,7 @@ from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils.lab_api.math import quat_apply_inverse
 from mjlab.viewer import ViewerConfig
 
-from robot_safety_sandbox.envs.assets_car.car_constants import get_car_robot_cfg
+from robot_safety_sandbox.envs.assets.car.car_constants import get_car_robot_cfg
 from robot_safety_sandbox.envs.terrains.car_arena import (
   CAR_ARENA_CFG,
   GOAL_RADIUS,

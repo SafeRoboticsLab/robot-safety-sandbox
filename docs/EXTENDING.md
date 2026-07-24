@@ -141,7 +141,7 @@ Contact information enters three ways, all shown in shipped tasks:
 
 ## Checklist for a new robot
 
-`envs/assets_go2/` (quadruped) and `envs/assets_digit/` (humanoid, with
+`envs/assets/go2/` (quadruped) and `envs/assets/digit/` (humanoid, with
 closed kinematic loops and payload variants) are the two references:
 
 1. `envs/assets_<robot>/xmls/<robot>.xml` + meshes; strip floor/lights (the

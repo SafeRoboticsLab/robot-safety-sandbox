@@ -26,7 +26,7 @@ build your own robot:
     into a *specification* a safety learner can optimize, and nothing more. Learn
     this one example and you can bring any mjlab robot into the same pipeline.
 
-The finished files live under `robot_safety_sandbox/envs/assets_car/`,
+The finished files live under `robot_safety_sandbox/envs/assets/car/`,
 `envs/terrains/car_arena.py`, `envs/car_goal/env_cfg.py`, and
 `tasks/car_goal.py`. Read this page top-to-bottom, then open those four files —
 they will read like prose.
@@ -68,7 +68,7 @@ Everything below is just *supplying `g` and `l` honestly* for one small robot.
 
 ## 1. The asset — a robot mjlab can drive
 
-**Files:** `envs/assets_car/xmls/car.xml`, `envs/assets_car/car_constants.py`
+**Files:** `envs/assets/car/xmls/car.xml`, `envs/assets/car/car_constants.py`
 
 A task needs a body. We copied a minimal differential-drive car MJCF — a chassis
 on a free joint, two independently-driven wheels (`left`, `right`), and a passive

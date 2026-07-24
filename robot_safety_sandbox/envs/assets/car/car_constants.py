@@ -17,9 +17,7 @@ import mujoco
 from mjlab.actuator import BuiltinVelocityActuatorCfg
 from mjlab.entity import EntityArticulationInfoCfg, EntityCfg
 
-ZOO_ENVS_PATH = Path(__file__).resolve().parents[1]
-
-CAR_XML: Path = ZOO_ENVS_PATH / "assets_car" / "xmls" / "car.xml"
+CAR_XML: Path = Path(__file__).resolve().parent / "xmls" / "car.xml"
 assert CAR_XML.exists()
 
 

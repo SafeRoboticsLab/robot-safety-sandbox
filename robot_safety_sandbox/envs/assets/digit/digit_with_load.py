@@ -3,7 +3,7 @@
 import mujoco
 import numpy as np
 
-from robot_safety_sandbox.envs.assets_digit.digit_constants import get_spec_upright
+from robot_safety_sandbox.envs.assets.digit.digit_constants import get_spec_upright
 
 _BAR_RADIUS = 0.25  # metres
 _BAR_LENGTH = 0.3  # metres — change this to resize

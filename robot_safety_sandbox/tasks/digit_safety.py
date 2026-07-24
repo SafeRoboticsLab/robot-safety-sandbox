@@ -38,7 +38,7 @@ Digit specifics vs the go2 default: ``ctrl_dim=20`` (actuators); ``ctrl_gain=12`
 adversary force is applied to the ``torso`` body.
 
 The Digit asset and env builders are vendored into the zoo
-(``envs/assets_digit`` + ``envs/digit_safety/builders.py``); no mjlab-fork
+(``envs/assets/digit`` + ``envs/digit_safety/builders.py``); no mjlab-fork
 dependency remains.
 """
 

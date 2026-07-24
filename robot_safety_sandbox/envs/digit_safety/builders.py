@@ -12,7 +12,7 @@ Vendored from the mjlab fork (MjlabSafety_Digit @ 28b7ed9):
   metric instead of ``mean_action_acc``.
 * the Digit builders — ``src/mjlab/tasks/velocity/config/digit_v3/env_cfgs.py``
   verbatim, with imports repointed: robot cfgs come from
-  ``robot_safety_sandbox.envs.assets_digit``; fork-only mdp functions come from the
+  ``robot_safety_sandbox.envs.assets.digit``; fork-only mdp functions come from the
   vendored ``robot_safety_sandbox.envs.digit_safety.mdp`` (as ``zoo_mdp``);
   everything else resolves against stock mjlab modules.
 
@@ -73,7 +73,7 @@ from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.utils.spec_config import CollisionCfg
 from mjlab.viewer import ViewerConfig
 
-from robot_safety_sandbox.envs.assets_digit.digit_constants import (
+from robot_safety_sandbox.envs.assets.digit.digit_constants import (
   DIGIT_ACTION_SCALE,
   DIGIT_CALIBRATED_ARTICULATION,
   DIGIT_RIGIDTOE_ARTICULATION,
@@ -81,13 +81,13 @@ from robot_safety_sandbox.envs.assets_digit.digit_constants import (
   get_spec_upright_calibrated,
   get_spec_upright_calibrated_rigidtoe,
 )
-from robot_safety_sandbox.envs.assets_digit.digit_with_box import (
+from robot_safety_sandbox.envs.assets.digit.digit_with_box import (
   get_spec_upright_calibrated_rigidtoe_with_box_on_arms,
   get_spec_upright_calibrated_with_box_on_arms,
   get_spec_upright_with_box,
   get_spec_upright_with_box_on_arms,
 )
-from robot_safety_sandbox.envs.assets_digit.digit_with_load import get_spec_upright_with_load
+from robot_safety_sandbox.envs.assets.digit.digit_with_load import get_spec_upright_with_load
 from robot_safety_sandbox.envs.digit_safety import mdp as zoo_mdp
 
 

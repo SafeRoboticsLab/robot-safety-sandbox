@@ -37,7 +37,7 @@ The algorithms never change. The env contract they consume:
 
 ## Step 1 — env cfg (`envs/<your_task>/env_cfg.py`)
 
-Plain mjlab `ManagerBasedRlEnvCfg`: scene (robot from `envs/assets_go2` or your
+Plain mjlab `ManagerBasedRlEnvCfg`: scene (robot from `envs/assets/go2` or your
 own), terrain, observations, reset events, curricula. Study
 `envs/go2_gap/chain.py` (takeover-momentum spawns, stratified across the
 decision boundary) and `envs/go2_crawl/env_cfg.py`.
