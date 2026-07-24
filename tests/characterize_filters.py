@@ -31,26 +31,31 @@ from filter_fixtures import Fixture, drive  # noqa: E402
 OUT = os.path.join(_HERE, "fixtures", "filter_characterization.pt")
 
 
+def _counters(filt):
+  """Counters live on ``filt`` pre-refactor and on ``filt.telemetry`` after."""
+  return getattr(filt, "telemetry", filt)
+
+
 def main() -> None:
   with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
     from robot_safety_sandbox.filters import QCBFFilter, ValueShield
 
-  torch.manual_seed(0)
-  fx = Fixture()
+    torch.manual_seed(0)
+    fx = Fixture()
 
-  vs = ValueShield(fx.num_envs, fx.device, fx.value_fn, fx.fallback_fn)
-  value_trace = drive(vs.act, fx)
-  value_trace["engaged_steps"] = vs.engaged_steps.clone()
-  value_trace["caution_steps"] = vs.caution_steps.clone()
+    vs = ValueShield(fx.num_envs, fx.device, fx.value_fn, fx.fallback_fn)
+    value_trace = drive(vs.act, fx)
+    value_trace["engaged_steps"] = _counters(vs).engaged_steps.clone()
+    value_trace["caution_steps"] = _counters(vs).caution_steps.clone()
 
-  fx2 = Fixture()
-  qc = QCBFFilter(fx2.num_envs, fx2.device, fx2.q_fn, fx2.fallback_fn)
-  qcbf_trace = drive(qc.act, fx2)
-  qcbf_trace["engaged_steps"] = qc.engaged_steps.clone()
+    fx2 = Fixture()
+    qc = QCBFFilter(fx2.num_envs, fx2.device, fx2.q_fn, fx2.fallback_fn)
+    qcbf_trace = drive(qc.act, fx2)
+    qcbf_trace["engaged_steps"] = _counters(qc).engaged_steps.clone()
 
   os.makedirs(os.path.dirname(OUT), exist_ok=True)
-  torch.save({"value_shield": value_trace, "qcbf": qcbf_trace}, OUT)
+  torch.save({"value_filter": value_trace, "qcbf": qcbf_trace}, OUT)
   print(f"wrote {OUT}")
   print(f"  value: engaged {value_trace['engaged'].float().mean():.4f} "
         f"caution {value_trace['caution'].float().mean():.4f}")
