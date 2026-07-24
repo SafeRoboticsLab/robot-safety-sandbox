@@ -48,7 +48,7 @@ but sound: every point of it is backed by a realized safe crossing.
 
 ## Live safety filter — defer, then jump
 
-Wrap the blind flat walker in a value-shield filter built from each twin's `V(s)`
+Wrap the blind flat walker in a safety value filter built from each twin's `V(s)`
 + fallback policy. The robot starts back from the edge and walks forward:
 
 ![safety filter: RA defers then jumps](assets/go2_gap_filter.gif){ width="520" }

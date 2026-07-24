@@ -5,7 +5,8 @@ synthesis, and safety-filter evaluation — the environment layer for
 [safety-stable-baselines](https://github.com/SafeRoboticsLab/safety-stable-baselines).
 
 Reach-avoid / avoid-only × single-agent / adversarial (ISAACS), on GPU end-to-end,
-plus a `filters/` library (value shielding, R-CBF/Q-CBF projection, rollout shielding).
+plus a `filters/` library in which a safety filter is a composition of three
+swappable modules: fallback (pi^<) / monitor (Delta) / intervention (phi).
 
 ## Start here
 

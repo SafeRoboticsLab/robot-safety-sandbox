@@ -52,7 +52,7 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg  # noqa: E402
 
 from safety_sb3 import ReachAvoidPPO, SafetyPPO  # noqa: E402
 from robot_safety_sandbox import spec  # noqa: E402
-from robot_safety_sandbox.filters import ValueShield  # noqa: E402
+from robot_safety_sandbox.filters import safety_value_filter  # noqa: E402
 
 CTRL_GAIN = 3.0        # bridge convention: policy action * gain -> env action
 # terrain geometry is task-dependent -> CLI args (--gap-x/--rest-x/--spawn-x):
@@ -180,10 +180,11 @@ def load_safety(zip_path: str, device: str):
 
 
 # --- filter ------------------------------------------------------------------
-# The latched eps-switch + caution band lives in the library now
-# (robot_safety_sandbox.filters.ValueShield); this script wires the twin's value
-# head and fallback policy into it and keeps the walker-command surgery
-# (caution -> zero command) at the call site, where the env lives.
+# The latched eps-switch + caution band lives in the library now, as the
+# composition PolicyFallback + ValueMonitor + LeastRestrictiveIntervention
+# (robot_safety_sandbox.filters.safety_value_filter); this script wires the
+# twin's value head and fallback policy into it and keeps the walker-command
+# surgery (caution -> zero command) at the call site, where the env lives.
 
 
 # --- main --------------------------------------------------------------------
@@ -256,9 +257,9 @@ def main():
       return torch.clamp(safety.policy._predict(s_obs, deterministic=True),
                          -1.0, 1.0)
 
-  filt = ValueShield(args.num_envs, device, _value_fn, _fallback_fn,
-                     eps=args.eps, caution=args.caution,
-                     hysteresis=args.hysteresis)
+  filt = safety_value_filter(args.num_envs, device, _value_fn, _fallback_fn,
+                             eps=args.eps, caution=args.caution,
+                             hysteresis=args.hysteresis)
 
   robot = env.scene["robot"]
   origin_x = env.scene.env_origins[:, 0]
@@ -284,15 +285,14 @@ def main():
     a_walk, _ = walker.predict(w_obs, deterministic=True)
     a_walk = torch.as_tensor(np.clip(a_walk, -1, 1), dtype=torch.float32,
                              device=device)
-    # safety value + fallback (tensor path) via the library shield
+    # safety value + fallback (tensor path) via the library filter
     s_obs = snorm(obs_dict["proprioception"].float())
     speed = torch.norm(robot.data.root_link_lin_vel_w[:, :2], dim=1)
-    action, finfo = filt.act(a_walk, speed=speed, fresh=prev_done, s_obs=s_obs)
+    action, finfo = filt(a_walk, speed=speed, fresh=prev_done, s_obs=s_obs)
     engaged, caution, v = finfo.engaged, finfo.caution, finfo.value
     if args.no_filter:
-      filt.engaged.zero_()
-      filt.engaged_steps.zero_()
-      filt.caution_steps.zero_()
+      filt.intervention.engaged.zero_()
+      filt.telemetry.reset()
       action = a_walk
       engaged = torch.zeros_like(engaged)
       caution = torch.zeros_like(caution)
@@ -386,8 +386,8 @@ def main():
     crossing_rate=tot["crossings"] / ep,
     livelock_rate=(tot["timeouts_before_gap"]
                    + tot["censored_alive_before_gap"]) / ep,
-    intervention_rate=filt.intervention_rate(args.steps),
-    caution_rate=float(filt.caution_steps.sum() / (n * args.steps)),
+    intervention_rate=filt.telemetry.intervention_rate(args.steps),
+    caution_rate=filt.telemetry.caution_rate(args.steps),
     hybrid_rate=(hyb_steps / (n * args.steps)) if hyb is not None else 0.0,
     gap_width=args.gap_width, n_gaps=args.n_gaps, eps=args.eps,
     filter="off" if args.no_filter else (os.path.basename(

@@ -1,8 +1,8 @@
 """Reach-avoid vs avoid-only SAFETY FILTER on a walk-in approach to a gap.
 
 Start the robot STANDING ~1.5 m back from the gap edge, drive it forward with
-the blind flat walker, and shield with a safety twin's V(s) + fallback (the
-library ValueShield). Question: does the RA certificate let the robot walk
+the blind flat walker, and filter with a safety twin's V(s) + fallback (the
+library safety_value_filter). Question: does the RA certificate let the robot walk
 freely and engage only to JUMP at the edge, where avoid-only brakes early?
 
 Split_v2 removes the joint-reset event, so we set the FULL standing pose (root at
@@ -35,7 +35,7 @@ import torch
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from robot_safety_sandbox.filters import ValueShield
+from robot_safety_sandbox.filters import safety_value_filter
 from eval_filter import build_filter_env_cfg, load_walker, load_safety, CTRL_GAIN
 
 SPAWN_X_REL = -1.5   # metres back from the gap edge (origin is AT the edge)
@@ -120,8 +120,9 @@ def main():
     with torch.no_grad():
       return torch.clamp(safety.policy._predict(s_obs, deterministic=True), -1, 1)
 
-  filt = ValueShield(n, dev, value_fn, fallback_fn, eps=args.eps,
-                     caution=args.caution, hysteresis=args.hysteresis)
+  filt = safety_value_filter(n, dev, value_fn, fallback_fn, eps=args.eps,
+                             caution=args.caution,
+                             hysteresis=args.hysteresis)
 
   obs, _ = env.reset()
   prev_done = torch.ones(n, dtype=torch.bool, device=dev)
@@ -138,7 +139,7 @@ def main():
     aw = torch.as_tensor(np.clip(aw, -1, 1), dtype=torch.float32, device=dev)
     s_obs = snorm(obs["proprioception"].float())
     speed = torch.norm(robot.data.root_link_lin_vel_w[:, :2], dim=1)
-    action, finfo = filt.act(aw, speed=speed, fresh=prev_done, s_obs=s_obs)
+    action, finfo = filt(aw, speed=speed, fresh=prev_done, s_obs=s_obs)
     eng, cau, V = finfo.engaged, finfo.caution, finfo.value
     if args.no_filter:
       action = aw; eng = torch.zeros_like(eng); cau = torch.zeros_like(cau)
@@ -163,7 +164,7 @@ def main():
   print(f"[result] {args.label}: reached_far={float(reached.float().mean()):.2f}  "
         f"fell={float(fell.float().mean()):.2f}  "
         f"max_x_rel={float((robot.data.root_link_pos_w[:,0]-ox).max()):.2f}  "
-        f"intervention_rate={filt.intervention_rate(args.steps):.2f}")
+        f"intervention_rate={filt.telemetry.intervention_rate(args.steps):.2f}")
   if render:
     imageio.mimwrite(args.out, frames, fps=30, macro_block_size=1)
     print(f"[video] {len(frames)} frames -> {args.out}")

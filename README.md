@@ -5,9 +5,9 @@ synthesis, and safety-filter evaluation.**
 
 Massively-parallel **mjlab** benchmark environments for **safety_sb3**
 (safety-stable-baselines): reach-avoid / avoid-only × single-agent /
-adversarial (ISAACS), on GPU end-to-end — plus a `filters/` library with the
-three deployment styles (value shielding, R-CBF/Q-CBF projection,
-rollout shielding).
+adversarial (ISAACS), on GPU end-to-end — plus a `filters/` library in which a
+safety filter is a COMPOSITION of three swappable modules (fallback / monitor /
+intervention), not a class per recipe.
 
 > Renamed from `safe_mjlab_zoo`; the package is `robot_safety_sandbox`.
 
