@@ -99,7 +99,7 @@ class _Policy:
   isaacs.py's tensor rollout: ``cat([ctrl_actor(o), dstb_actor(o)])``, actions
   already in [-1, 1], the env clamps).
 
-  ``stock=True`` is a vanilla SB3 PPO checkpoint (a kind="nominal" bridge/walker,
+  ``stock=True`` is a vanilla SB3 PPO checkpoint (a mode="cumulative" bridge/walker,
   trained on the numpy path): obs stats come from ``vecnormalize.pkl`` and actions
   from ``model.predict`` (numpy), not the safety_sb3 tensor policy."""
 

@@ -52,7 +52,7 @@ from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback 
 
 from _run_config import dump_config, merge_config  # noqa: E402  (examples/ sibling)
 from robot_safety_sandbox import (  # noqa: E402
-  algo_name, list_tasks, make_tensor, spec)
+  CUMULATIVE, algo_name, list_tasks, make_tensor, spec)
 from robot_safety_sandbox.callbacks import (  # noqa: E402
   ForceRampCallback,
   PerEnvForceScaleCallback,
@@ -194,10 +194,11 @@ def main():
 
   # --- resolve task + learner (2x2: problem from margins, players from --adversary) ---
   s = spec(args.task)
-  if s.kind != "safety":
+  if s.mode == CUMULATIVE:
     raise SystemExit(
-      f"'{args.task}' is a {s.kind} task (dense reward, no margins) — train it "
-      f"with train_nominal.py; this trainer is for the safety layer.")
+      f"'{args.task}' is a mode={CUMULATIVE!r} task (plain reward-maximizing RL "
+      f"on the env's dense reward, no margins) — train it with "
+      f"`train.py --family on_policy`; the SAC family here is safety-only.")
   algo = algo_name(args.task, adversary=args.adversary)  # PPO-family name
   if algo not in PPO_TO_SAC:
     raise SystemExit(f"'{args.task}' resolves to '{algo}', which has no SAC analog.")

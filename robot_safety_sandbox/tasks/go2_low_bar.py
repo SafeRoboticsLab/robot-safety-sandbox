@@ -10,14 +10,14 @@ from __future__ import annotations
 from functools import partial
 
 from ..margins import avoid_only
-from ..registry import TaskSpec, register
+from ..registry import CUMULATIVE, TaskSpec, register
 
 
 def register_all() -> None:
   from robot_safety_sandbox.envs.go2_crawl.low_bar import (
     low_bar_margins, unitree_go2_low_bar_env_cfg)
 
-  # Dense-reward crawl-forward BRIDGE (vanilla SB3 PPO, kind="nominal" -> the env
+  # Dense-reward crawl-forward BRIDGE (vanilla SB3 PPO, mode=CUMULATIVE -> the env
   # is auto-built in DENSE-reward mode; same proprioception obs as the twins).
   # reward=g (the safety framing) only rewards staying safe -> it LOITERS with no
   # forward drive (a crawl has no ballistic phase to carry it, unlike the gap
@@ -28,7 +28,7 @@ def register_all() -> None:
     task_id="go2_low_bar_bridge",
     cfg_builder=partial(unitree_go2_low_bar_env_cfg, bar_clearance=0.39,
                         bar_depth=0.4),
-    kind="nominal", default_algo="PPO",
+    mode=CUMULATIVE,
     description="Dense-reward crawl-forward bridge (vanilla PPO): learns to crawl "
                 "through the bar; warm-starts both twins. Analog of go2_gap_crossing."))
 

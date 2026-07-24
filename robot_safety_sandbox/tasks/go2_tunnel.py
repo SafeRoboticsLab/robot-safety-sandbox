@@ -34,7 +34,6 @@ def register_all() -> None:
     default_algo="ReachAvoidPPO",          # -> ReachAvoidSAC via train_off_policy.py
     end_criterion="reach-avoid",
     ctrl_dim=12,
-    kind="safety",
     description="tunnel crawl reach-avoid @clearance 0.30, depth 0.4: uniform "
                 "randomized pose+velocity spawn; RA target = completion just "
                 "past the exit. Single-variable contrast vs _avoid."))
@@ -47,6 +46,5 @@ def register_all() -> None:
     default_algo="SafetyPPO",              # -> SafetySAC via train_off_policy.py
     end_criterion="failure",
     ctrl_dim=12,
-    kind="safety",
     description="tunnel crawl avoid-only @clearance 0.30, depth 0.4: uniform "
                 "randomized pose+velocity spawn; no reach term (avoid_only)."))

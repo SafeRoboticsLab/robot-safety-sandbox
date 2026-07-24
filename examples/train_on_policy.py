@@ -1,8 +1,21 @@
-"""Zoo trainer: any registered task on the GPU-resident path, full telemetry.
+"""Zoo trainer (PPO family): any registered task, full telemetry.
 
-  python examples/train.py --task go2_gap_landing --steps 200000000 --seed 0
-  python examples/train.py --task go2_gap_chain --steps 2000000000 --seed 0 \
+  python examples/train.py --family on_policy --task go2_gap_landing --steps 200000000
+  python examples/train.py --family on_policy --task go2_gap_chain --steps 2000000000 \
       --load runs/go2_gap_crossing/final_model.zip
+  python examples/train.py --family on_policy --task go2_walker_flat --num-envs 4096
+
+It dispatches on the TASK's ``mode`` (registry.MODES), the two branches sharing
+one argparse / config / wandb / checkpoint plumbing:
+
+  safety / reach-avoid  the GPU-resident tensor bridge + a safety_sb3 learner
+                        (Safety/ReachAvoid/Isaacs/Gameplay PPO, resolved from
+                        the mode x --adversary).
+  cumulative            plain reward-maximizing RL: the numpy bridge in dense
+                        mode + STOCK stable_baselines3 PPO (see
+                        :func:`_train_cumulative` — the checkpoint stays a
+                        vanilla SB3 zip on purpose). Safety-only knobs are
+                        refused in this mode, never silently applied.
 
 Everything a benchmark run needs is on by default: wandb (metrics + eval
 videos from step 0), periodic checkpoints (+ normalizer stats), curriculum
@@ -35,8 +48,8 @@ import torch as th  # noqa: E402
 from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback  # noqa: E402
 
 from _run_config import dump_config, merge_config  # noqa: E402  (examples/ sibling)
-from safety_sb3 import IsaacsPPO, ReachAvoidPPO, SafetyPPO  # noqa: E402
-from robot_safety_sandbox import algo_name, list_tasks, make_tensor, spec  # noqa: E402
+from robot_safety_sandbox import (  # noqa: E402
+  CUMULATIVE, algo_name, list_tasks, make_tensor, spec)
 from robot_safety_sandbox.callbacks import (  # noqa: E402
   ForceRampCallback,
   FwdForceAnnealCallback,
@@ -49,21 +62,168 @@ from robot_safety_sandbox.callbacks import (  # noqa: E402
   VideoWandbCallback,
 )
 
-ALGOS = {"SafetyPPO": SafetyPPO, "ReachAvoidPPO": ReachAvoidPPO}
-
-# The two-player learners need safety_sb3 >= v0.2.0, where the 2x2 (avoid /
-# reach-avoid) x (1P / 2P) is complete. v0.2.0 also RENAMED the two-player
-# reach-avoid game IsaacsPPO -> GameplayPPO and reused the name IsaacsPPO for
-# the two-player AVOID game (ISAACS eq. 7). So on v0.1.0 `IsaacsPPO` still
-# imports and still trains — as the WRONG problem. Gate on GameplayPPO's
-# presence (the v0.2.0 tell) rather than trusting the name.
+# safety_sb3 supplies the SAFETY learners, and is OPTIONAL at import time: a
+# CUMULATIVE-only install (dense-reward task policies on stock SB3, see base.py)
+# trains through this same trainer, so a missing safety_sb3 must not break the
+# import — ALGOS just stays empty and the safety branch fails loud below.
+ALGOS = {}
 try:
-  from safety_sb3 import GameplayPPO  # noqa: E402
+  from safety_sb3 import IsaacsPPO, ReachAvoidPPO, SafetyPPO  # noqa: E402
 
-  ALGOS["GameplayPPO"] = GameplayPPO
-  ALGOS["IsaacsPPO"] = IsaacsPPO
+  ALGOS.update({"SafetyPPO": SafetyPPO, "ReachAvoidPPO": ReachAvoidPPO})
+  # The two-player learners need safety_sb3 >= v0.2.0, where the 2x2 (avoid /
+  # reach-avoid) x (1P / 2P) is complete. v0.2.0 also RENAMED the two-player
+  # reach-avoid game IsaacsPPO -> GameplayPPO and reused the name IsaacsPPO for
+  # the two-player AVOID game (ISAACS eq. 7). So on v0.1.0 `IsaacsPPO` still
+  # imports and still trains — as the WRONG problem. Gate on GameplayPPO's
+  # presence (the v0.2.0 tell) rather than trusting the name.
+  try:
+    from safety_sb3 import GameplayPPO  # noqa: E402
+
+    ALGOS["GameplayPPO"] = GameplayPPO
+    ALGOS["IsaacsPPO"] = IsaacsPPO
+  except ImportError:
+    pass  # v0.1.0: leave both two-player learners UNAVAILABLE (fail closed)
 except ImportError:
-  pass  # v0.1.0: leave both two-player learners UNAVAILABLE (fail closed)
+  pass  # no safety_sb3: only mode="cumulative" tasks are trainable here
+
+# --- mode="cumulative" (plain reward-maximizing RL) -------------------------
+# This trainer's own defaults are the SAFETY recipe; a cumulative task keeps the
+# vanilla-PPO recipe (what examples/train_nominal.py used before it became a
+# shim onto this trainer). Applied as argparse DEFAULTS, so a --config file or
+# an explicit CLI flag still wins.
+_CUMULATIVE_DEFAULTS = dict(
+  num_envs=1024, steps=150_000_000, lr=3e-4, ent_coef=5e-3,
+  video_interval=10_000_000, adaptive_lr=False)  # stock PPO: no KL-adaptive LR
+
+# Knobs that only mean something for the SAFETY backups. In cumulative mode they
+# are REJECTED rather than silently ignored — several would quietly change the
+# objective (a gamma anneal toward 0.9999 is a safety-value trick, an l-anneal
+# reshapes a target set this mode does not have). NB there is no gamma knob in
+# this trainer at all (gamma is fixed 0.99 in both branches); the SAC trainer's
+# --gamma-* flags don't exist here, so a config carrying them is already
+# rejected by merge_config's key validation.
+_SAFETY_ONLY = (
+  "adversary", "terminal_type", "end_criterion", "l_anneal_steps",
+  "l_hold_steps", "adaptive_lr", "desired_kl", "max_std", "std_floor",
+  "std_ceil", "target_kl", "reset_value", "fwd_force", "force_max",
+  "force_ramp_frac", "force_floor", "force_init", "dstb_pretrain",
+  "norm_freeze_steps",
+)
+
+
+def _train_cumulative(args, outdir):
+  """mode="cumulative": plain reward-maximizing RL on the env's dense reward —
+  the TASK policy a safety filter wraps.
+
+  Deliberately STOCK ``stable_baselines3.PPO`` on the NUMPY bridge, not
+  ``SafetyPPO(mode="cumulative")``. The two are numerically identical
+  (safety_sb3's cumulative buffer reproduces SB3's GAE bit-for-bit), so the
+  class choice is free — and stock PPO keeps the checkpoint a plain SB3 zip,
+  which (a) examples/eval_filter.py reads with ``PPO.load`` and (b) stays
+  loadable in an install without safety_sb3. Do NOT "upgrade" this to a safety
+  learner: it would change the saved artifact format.
+  """
+  from stable_baselines3 import PPO
+  from stable_baselines3.common.vec_env import VecMonitor, VecNormalize
+
+  from robot_safety_sandbox import make_numpy
+  from robot_safety_sandbox.callbacks import (
+    DenseMetricsCallback, DenseVideoWandbCallback, VecNormSaveCallback)
+
+  print(f"[algo] {args.task} mode={CUMULATIVE} -> PPO (stock stable_baselines3)")
+  # numpy bridge, auto-dense for cumulative tasks (reward = the env's dense
+  # reward stack); stock PPO gets standard GAE + timeout bootstrap.
+  env = make_numpy(args.task, args.num_envs, args.device,
+                   cfg_overrides=args.env_overrides)
+  # VecMonitor (UNDER VecNormalize) tracks per-env return/length and injects
+  # info["episode"] -> SB3 logs rollout/ep_rew_mean + ep_len_mean on the RAW
+  # (un-normalized) dense reward. The bare bridge emits no episode infos, so
+  # without this the whole rollout/ section is missing.
+  env = VecMonitor(env)
+  # dense reward CAN be normalized (unlike the safety margin g).
+  env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0)
+
+  net = [int(x) for x in args.net.split(",") if x.strip()]
+  if args.load:
+    from stable_baselines3.common.buffers import RolloutBuffer as _RB
+    model = PPO.load(
+      args.load, env=env, device=args.device,
+      custom_objects={"tensorboard_log": outdir, "learning_rate": args.lr,
+                      "ent_coef": args.ent_coef,
+                      "n_steps": 24, "batch_size": args.num_envs * 24 // 4,
+                      # safety_sb3 zips carry the tensor rollout buffer; the
+                      # numpy bridge needs the stock numpy buffer.
+                      "rollout_buffer_class": _RB,
+                      "rollout_buffer_kwargs": {}})
+    print(f"[warm-start] loaded {args.load}")
+  else:
+    model = PPO(
+      "MlpPolicy", env, n_steps=24, batch_size=args.num_envs * 24 // 4, n_epochs=5,
+      gamma=0.99, gae_lambda=0.95, learning_rate=args.lr, ent_coef=args.ent_coef,
+      vf_coef=args.vf_coef, clip_range=0.2, max_grad_norm=1.0,
+      policy_kwargs=dict(log_std_init=math.log(0.5),
+                         net_arch=dict(pi=net, vf=net)),
+      seed=args.seed, verbose=1, device=args.device, tensorboard_log=outdir)
+  print(f"[recipe] net={net} ent_coef={args.ent_coef} lr={args.lr} "
+        f"vf_coef={args.vf_coef} (stock PPO: no adaptive LR, gamma=0.99)")
+  if args.load_tensornorm:
+    st = th.load(args.load_tensornorm, map_location="cpu", weights_only=True)
+    env.obs_rms.mean = st["obs_mean"].numpy().astype("float64")
+    env.obs_rms.var = st["obs_var"].numpy().astype("float64")
+    env.obs_rms.count = 1.0e6
+    print(f"[warm-start] obs normalizer transplanted from {args.load_tensornorm}")
+  if args.reset_log_std is not None:
+    with th.no_grad():
+      model.policy.log_std.fill_(math.log(args.reset_log_std))
+    print(f"[warm-start] log_std reset -> {args.reset_log_std}")
+
+  ckpt_dir = os.path.join(outdir, "checkpoints")
+  cbs = [
+    CheckpointCallback(save_freq=max(1, 10_000_000 // args.num_envs),
+                       save_path=ckpt_dir, name_prefix="model"),
+    # policy checkpoints alone can't be evaluated -> save the obs normalizer too.
+    VecNormSaveCallback(ckpt_dir, save_freq_steps=10_000_000),
+    # per-term reward / termination breakdown (env/*) from the bridge metrics().
+    DenseMetricsCallback(),
+  ]
+  if not args.no_wandb:
+    import wandb
+    from wandb.integration.sb3 import WandbCallback
+    wandb.init(project=args.wandb_project, name=args.task, config=vars(args),
+               sync_tensorboard=True, save_code=False, reinit=True)
+    cbs.append(WandbCallback(verbose=0))
+    # Eval clips: a "<task>_video" packed-terrain herd variant if registered
+    # (auto-dense: no force / no safety hook -> the unaided policy).
+    _vtask = args.task + "_video"
+    _vtask = _vtask if _vtask in list_tasks() else args.task
+    cbs.append(DenseVideoWandbCallback(
+      lambda: make_tensor(_vtask, 8, args.device, render_mode="rgb_array"),
+      interval=args.video_interval))
+
+  model.learn(total_timesteps=args.steps, callback=CallbackList(cbs))
+  model.save(os.path.join(outdir, "final_model.zip"))   # plain SB3 zip
+  env.save(os.path.join(outdir, "vecnormalize.pkl"))
+  print(f"[done] {outdir}")
+
+
+def _peek_mode():
+  """The mode of the task named on the CLI (or in the --config), resolved BEFORE
+  the strict parse so a cumulative run can swap in the plain-RL defaults.
+  Returns None when the task can't be resolved yet (e.g. a bare --help)."""
+  pre = argparse.ArgumentParser(add_help=False)
+  pre.add_argument("--task")
+  pre.add_argument("--config")
+  known, _ = pre.parse_known_args()
+  task = known.task
+  if task is None and known.config and os.path.exists(known.config):
+    import yaml
+    with open(known.config) as f:
+      task = (yaml.safe_load(f) or {}).get("task")
+  try:
+    return spec(task).mode if task else None
+  except KeyError:
+    return None
 
 
 def main():
@@ -80,6 +240,18 @@ def main():
   p.add_argument("--steps", type=int, default=200_000_000)
   p.add_argument("--seed", type=int, default=0)
   p.add_argument("--load", default=None, help="warm-start model .zip (previous stage)")
+  p.add_argument("--load-tensornorm", default=None,
+                 help="mode=cumulative only: transplant the obs normalizer from "
+                      "a safety run's tensornormalize.pt. The safety branch "
+                      "auto-detects the normalizer next to --load instead.")
+  p.add_argument("--reset-value", action="store_true",
+                 help="on warm-start, re-initialize the VALUE (critic) net so it "
+                      "learns the new objective's returns from scratch (POLICY-only "
+                      "warm-start). Use when the source stage optimized a DIFFERENT "
+                      "margin (e.g. avoid g -> reach-avoid): a value net fit to the "
+                      "old returns blows up (value_loss explosion -> policy collapse) "
+                      "when the new returns diverge. Also clears the optimizer moments "
+                      "(stale Adam v on the reset params would give a huge first step).")
   p.add_argument("--reset-log-std", type=float, default=None,
                  help="on warm-start, re-inflate the action std to this value "
                       "(escape a CONVERGED/collapsed source policy while keeping "
@@ -170,23 +342,45 @@ def main():
                       "never invent runs_<suffix> siblings, they escape .gitignore")
   p.add_argument("--wandb-project", default="robot_safety_sandbox")
   p.add_argument("--no-wandb", action="store_true")
+  if _peek_mode() == CUMULATIVE:
+    p.set_defaults(**_CUMULATIVE_DEFAULTS)
   args = merge_config(p)   # parse args; an optional --config sets defaults, CLI overrides
 
   s = spec(args.task)
-  if s.kind != "safety":
-    raise SystemExit(
-      f"'{args.task}' is a {s.kind} task (dense reward, no margins) — train "
-      f"it with train_nominal.py; this trainer is for the safety layer.")
-  tag = args.task + ("_adv" if args.adversary else "")
+  if s.mode == CUMULATIVE:
+    # Safety knobs are refused here, never silently applied: this mode
+    # maximizes the env's dense reward and has neither margins nor a target set.
+    bad = sorted(d for d in _SAFETY_ONLY
+                 if getattr(args, d) != p.get_default(d))
+    if bad:
+      raise SystemExit(
+        f"'{args.task}' is a mode={CUMULATIVE!r} task (plain reward-maximizing "
+        f"RL on the env's dense reward, stock stable_baselines3 PPO) — these "
+        f"SAFETY-only knobs have no meaning for it and are refused rather than "
+        f"silently applied: {bad}.")
+    tag = args.task
+  else:
+    if args.load_tensornorm:
+      raise SystemExit(
+        "--load-tensornorm is a mode='cumulative' knob; the safety branch "
+        "auto-detects tensornormalize.pt / vecnormalize.pkl next to --load.")
+    tag = args.task + ("_adv" if args.adversary else "")
   outdir = os.path.join(args.out, tag)
   os.makedirs(outdir, exist_ok=True)
   dump_config(outdir, args)   # reproducible: re-run with --config <outdir>/config.yaml
+  if s.mode == CUMULATIVE:
+    return _train_cumulative(args, outdir)
 
   # Resolve the learner from the task's PROBLEM (avoid vs reach-avoid, set by
   # its margins) x the RUN's player count (--adversary). algo_name() also
   # refuses an avoid-only task on a reach-avoid learner, which has no valid
   # formulation for any constant l (see margins.py).
   algo = algo_name(args.task, adversary=args.adversary)
+  if not ALGOS:
+    raise SystemExit(
+      f"'{args.task}' is a mode={s.mode!r} task and needs the '{algo}' learner, "
+      f"but safety_sb3 is not installed (only mode='cumulative' tasks train "
+      f"without it). Install safety-stable-baselines or set $SAFETY_SB3_PATH.")
   if algo not in ALGOS:
     raise SystemExit(
       f"'{args.task}'{' +--adversary' if args.adversary else ''} needs the "
@@ -280,6 +474,22 @@ def main():
     print(f"[ra-stable] action std capped at {args.max_std}")
   if args.load:
     model.set_parameters(args.load, exact_match=False, device=args.device)
+    if args.reset_value:
+      from functools import partial
+      pol = model.policy
+      # Re-init the value pathway only (keep the warm-started policy pathway):
+      # the value MLP branch + the value head. SB3 inits the value net with
+      # orthogonal gain sqrt(2) (extractor) / 1.0 (head).
+      if hasattr(pol.mlp_extractor, "value_net"):
+        pol.mlp_extractor.value_net.apply(partial(pol.init_weights, gain=math.sqrt(2)))
+      pol.value_net.apply(partial(pol.init_weights, gain=1.0))
+      # Fresh optimizer moments: stale Adam second-moments on the just-reset value
+      # params would produce a huge effective first step and re-explode the value.
+      # Policy WEIGHTS stay warm-started; only the optimizer state resets.
+      pol.optimizer = pol.optimizer_class(
+        pol.parameters(), lr=args.lr, **(pol.optimizer_kwargs or {}))
+      print("[warm-start] value net RESET (policy-only warm-start) + optimizer "
+            "moments cleared")
     if args.reset_log_std is not None:
       with th.no_grad():
         model.policy.log_std.fill_(math.log(args.reset_log_std))

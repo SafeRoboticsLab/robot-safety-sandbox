@@ -6,6 +6,9 @@ Two-phase decomposition (mirrors gap-jumping crossing -> chain):
   go2_crawl           Phase 2: decide crawl vs stop (rest l + window), warm from P1
   go2_crawl_isaacs    Phase 3: + worst-case force adversary
 
+Plus the CUMULATIVE (plain-RL, dense-reward) crawl walker the crawl safety
+filter wraps: go2_crawl_walk (+ its _video render variant).
+
 Env cfgs are NATIVE to the zoo (envs/go2_crawl/*).
 """
 
@@ -15,7 +18,7 @@ import torch
 
 from ..envs.terrains.crawl_filter import BAR_DEPTH, _BAR_X
 from ..margins import CLAMP, g_terrain_relative, l_rest
-from ..registry import TaskSpec, register
+from ..registry import CUMULATIVE, TaskSpec, register
 
 _V_CMD = 1.0   # forward crawl target (m/s), world +x
 _V_TOL = 0.7   # tracking tolerance (l >= 0 within this of the command)
@@ -225,7 +228,8 @@ def register_all() -> None:
   from robot_safety_sandbox.envs.go2_crawl.env_cfg import (
     unitree_go2_crawl_duck_env_cfg, unitree_go2_crawl_duck_video_env_cfg,
     unitree_go2_crawl_env_cfg, unitree_go2_crawl_isaacs_env_cfg,
-    unitree_go2_crawl_locomote_env_cfg)
+    unitree_go2_crawl_locomote_env_cfg, unitree_go2_crawl_walk_env_cfg,
+    unitree_go2_crawl_walk_video_env_cfg)
   register(TaskSpec(
     task_id="go2_crawl_duck", cfg_builder=unitree_go2_crawl_duck_env_cfg,
     margin_fn=crawl_duck_margins, default_algo="ReachAvoidPPO",
@@ -252,3 +256,21 @@ def register_all() -> None:
     default_algo="GameplayPPO", warmstart_from="go2_crawl",
     supports_adversary=True,
     description="Crawl + worst-case base-force adversary."))
+
+  # --- CUMULATIVE (plain-RL) crawl walker: the pi_task the crawl filter wraps.
+  # The Stage-1 dense-reward walker of the two-stage crawl decomposition: crawl
+  # terrain + bar perception, body_height target 0.22 (a ducked crawl), trained
+  # on the env's dense reward stack -- the thing reach-avoid l-shaping
+  # structurally cannot produce (gait quality). mode=CUMULATIVE -> no margins,
+  # env auto-built in dense mode, stock SB3 PPO.
+  register(TaskSpec(
+    task_id="go2_crawl_walk", cfg_builder=unitree_go2_crawl_walk_env_cfg,
+    mode=CUMULATIVE,
+    description="Dense-reward low-crawl WALKER (stock SB3 PPO -> a real gait). "
+                "Task policy pi_task for the crawl safety filter; train with "
+                "train.py --family on_policy."))
+  register(TaskSpec(
+    task_id="go2_crawl_walk_video",
+    cfg_builder=unitree_go2_crawl_walk_video_env_cfg,
+    mode=CUMULATIVE,
+    description="Packed-terrain herd render of go2_crawl_walk (eval video)."))
