@@ -41,6 +41,19 @@ terrain — plain mjlab, algorithm-agnostic) + `margin_fn(env) -> (g, l)`
 (compose from `margins.py`). Register a `TaskSpec` and both bridges
 (`make_tensor` for PPO learners, `make_numpy` for the SAC family) work.
 
+Each task declares one axis, its **`mode`** — the `safety_sb3` backup it is
+trained under:
+
+| `mode` | backup | trained by |
+|---|---|---|
+| `"safety"` | `V = min(g, γV′)` (avoid) | `SafetyPPO` / `IsaacsPPO` |
+| `"reach-avoid"` | `V = min(g, max(l, γV′))` | `ReachAvoidPPO` / `GameplayPPO` |
+| `"cumulative"` | `V = r + γ(1−d)V′` (plain RL) | stock `stable_baselines3.PPO` |
+
+`"cumulative"` is the dense-reward **task policy** a safety filter wraps — no
+margins, and stock SB3 so its checkpoint stays a vanilla SB3 zip. One trainer
+covers all three: `examples/train.py --family on_policy --task <id>`.
+
 ## Tasks
 
 | task | objective | learner | warm-starts from |
@@ -56,6 +69,7 @@ terrain — plain mjlab, algorithm-agnostic) + `margin_fn(env) -> (g, l)`
 | `go2_crawl` / `_isaacs` | duck under a low bar or stop | ReachAvoidPPO / GameplayPPO | — |
 | `go2_crawl_twin_avoid` / `go2_crawl_gate_avoid` | avoid twins of the crawl R-CBF pair (no target) | SafetyPPO | — |
 | `go2_crawl_twin_ra` / `go2_crawl_gate_ra` | reach-avoid twins of the crawl R-CBF pair | ReachAvoidPPO | — |
+| `go2_walker_flat` / `go2_crawl_walk` | dense-reward task policies (π_task) the filters wrap — blind flat walker / low-crawl walker | stock SB3 `PPO` (`mode="cumulative"`) | — |
 
 Task structure varies: `go2_stabilize` needs no curriculum or staging at all,
 while the gap family only forms its jump through staged warm-starts

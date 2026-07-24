@@ -1,7 +1,10 @@
 # Training configs
 
 Reusable experiment **recipes** for `examples/train.py` — the router that
-dispatches to the on-policy (PPO) or off-policy (SAC) trainer. A recipe is a YAML
+dispatches to the on-policy (PPO) or off-policy (SAC) trainer. The on-policy
+trainer then dispatches again on the TASK's `mode` (see `docs/API.md` §2): the
+safety modes get a safety_sb3 learner, `mode="cumulative"` gets stock SB3 PPO on
+the dense env reward (safety-only keys are refused there, not ignored). A recipe is a YAML
 file whose keys are the trainer's argparse flag names (the `dest`, e.g.
 `num_envs`, `gamma_schedule`), plus a reserved **`family:`** key
 (`on_policy` = PPO family, `off_policy` = SAC family) so the router knows which
@@ -59,6 +62,7 @@ experiment registry for the narrative of what was tried and why.
 | `go2_stabilize_gameplaysac.yaml` | `off_policy` | 2-player reach-avoid SAC (GameplaySAC), reference-faithful + fast leaderboard — the E042 config |
 | `go2_stabilize_reachavoidppo.yaml` | `on_policy` | 1-player reach-avoid PPO (ReachAvoidPPO), the safety-PPO recipe |
 | `car_goal.yaml` | `on_policy` | ReachAvoidPPO — the car-goal tutorial recipe |
+| `go2_walker_flat.yaml` | `on_policy` | `mode: cumulative` — the dense-reward Go2 walker (pi_task) on stock SB3 PPO |
 
 Add new recipes freely. Keep **canonical** recipes here (committed); keep ad-hoc
 sweeps / scratch experiments out of the repo (they belong with the private

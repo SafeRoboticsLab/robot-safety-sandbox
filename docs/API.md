@@ -33,13 +33,13 @@ A task hands the learner two margins per step:
 TaskSpec(
     task_id,
     cfg_builder,          # (play: bool) -> ManagerBasedRlEnvCfg   (plain mjlab)
-    margin_fn,            # (env) -> (g, l) batched tensors          (None for nominal)
-    default_algo="SafetyPPO",
+    margin_fn,            # (env) -> (g, l) batched tensors     (None for cumulative)
+    mode="safety",                   # which BACKUP values it (see below)
+    default_algo=None,               # DERIVED from mode; override to pin a learner
     end_criterion="failure",         # when the episode ends (§4)
     warmstart_from=None,             # previous pipeline-stage task_id
     supports_adversary=False,        # can this task take a --adversary run?
     ctrl_dim=12, dstb_dim=3,
-    kind="safety",                   # "safety" (margins) | "nominal" (dense task)
     description="",
 )
 ```
@@ -48,9 +48,28 @@ TaskSpec(
   Algorithm-agnostic.
 - **`margin_fn`** composes from `margins.py`. For an **avoid-only** task pass
   `compose(g_fn)` (no `l`) — see §5. It carries `has_target = (l_fn is not None)`.
-- **`default_algo`** picks the **column** (avoid vs reach-avoid) — this is the task's
-  *problem*. The **row** (single- vs two-player) is a property of the *run*
-  (`--adversary`), resolved by `algo_name()` (§3).
+- **`mode`** is the task's single axis: the `safety_sb3.backups` mode it is
+  trained under. It picks the learner **column** (avoid vs reach-avoid); the
+  **row** (single- vs two-player) is a property of the *run* (`--adversary`),
+  resolved by `algo_name()` (§3).
+
+| `mode` | backup | margins | trained by |
+|---|---|---|---|
+| `"safety"` (default) | `V = min(g, γV′)` | `margin_fn` required, no `l` | `SafetyPPO` / `IsaacsPPO` |
+| `"reach-avoid"` | `V = min(g, max(l, γV′))` | `margin_fn` required, real `l` | `ReachAvoidPPO` / `GameplayPPO` |
+| `"cumulative"` | `V = r + γ(1−d)V′` | **none** (`margin_fn=None`) | **stock** `stable_baselines3.PPO` |
+
+`mode="cumulative"` is plain reward-maximizing RL — the task policy `π_task` a
+safety filter wraps. Its envs are auto-built in **dense-reward** mode (the env's
+own reward stack instead of `g`), and it trains with **stock SB3**, keeping the
+checkpoint a vanilla SB3 zip that loads without `safety_sb3`. It replaces the
+retired `kind="nominal"` axis (and the `nominal/` package); `kind=` still works
+with a `DeprecationWarning` (`"safety"`→`"safety"`, `"nominal"`→`"cumulative"`).
+
+- **`default_algo`** is derived from the mode (`safety`→`SafetyPPO`,
+  `reach-avoid`→`ReachAvoidPPO`, `cumulative`→`PPO`). Naming one explicitly is
+  allowed and, in a registration that predates `mode=`, still fixes the mode —
+  the two must agree.
 
 Register once, and both bridges work:
 
@@ -68,7 +87,7 @@ from robot_safety_sandbox import (
     make_tensor, make_numpy, list_tasks, spec, register, algo_name, TaskSpec,
 )
 
-list_tasks(kind=None) -> list[str]        # kind: "safety" | "nominal" | None (all)
+list_tasks(mode=None) -> list[str]        # mode: one of MODES, or None (all)
 spec(task_id) -> TaskSpec
 register(TaskSpec) -> None
 algo_name(task_id, adversary=False) -> str   # the learner CLASS NAME to use
@@ -78,16 +97,19 @@ make_numpy (task_id, num_envs=64,   device="cuda:0", adversary=False, **kw)  # S
 ```
 
 `algo_name` resolves both axes and is the one place the 2×2 is kept honest — the
-task's margins fix the *problem*, `--adversary` fixes the *player count*:
+task's `mode` fixes the *backup*, `--adversary` fixes the *player count*:
 
-| task problem | 1-player | 2-player (`adversary=True`) |
+| task `mode` | 1-player | 2-player (`adversary=True`) |
 |---|---|---|
-| avoid (`default_algo=SafetyPPO`) | `SafetyPPO` | `IsaacsPPO` |
-| reach-avoid (`default_algo=ReachAvoidPPO`) | `ReachAvoidPPO` | `GameplayPPO` |
+| `"safety"` (avoid) | `SafetyPPO` | `IsaacsPPO` |
+| `"reach-avoid"` | `ReachAvoidPPO` | `GameplayPPO` |
+| `"cumulative"` | `PPO` (stock SB3) | — (no two-player cumulative game) |
 
 It **refuses** a reach-avoid learner on an avoid-only task (no target set) — the
-guard against the retired `l_neg` pattern. The registry never imports `safety_sb3`;
-`algo_name` returns names only, so the two layers stay decoupled.
+guard against the retired `l_neg` pattern. The registry never imports `safety_sb3`
+(it re-declares the mode strings as literals, pinned by a test): `algo_name`
+returns names only, so the two layers stay decoupled and a cumulative-only
+install — dense reward + stock SB3, no `safety_sb3` — still imports the registry.
 
 > `Isaacs*` = two-player **avoid** (ISAACS eq. 7); `Gameplay*` = two-player
 > **reach-avoid** (Gameplay Filters). These names changed meaning in safety_sb3

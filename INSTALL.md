@@ -5,7 +5,7 @@ Two packages, one benchmark:
 | repo | provides | depends on |
 |---|---|---|
 | [`safety-stable-baselines`](https://github.com/SafeRoboticsLab/safety-stable-baselines) (`safety_sb3`) | the ALGORITHMS: avoid (SafetyPPO / IsaacsPPO) + reach-avoid (ReachAvoidPPO / GameplayPPO), single- and two-player, (+ SAC variants), tensor path, buffers | SB3, torch |
-| `robot-safety-sandbox` (this repo) | the ENVIRONMENTS: task registry (safety + nominal layers), margins, bridges, trainers | mjlab, safety_sb3 |
+| `robot-safety-sandbox` (this repo) | the ENVIRONMENTS: task registry (one `mode` axis: avoid / reach-avoid / cumulative), margins, bridges, trainers | mjlab, safety_sb3 |
 
 Neither depends on `unitree_rl_mjlab` (the legacy research repo) — the zoo is
 self-contained and this independence is CI-tested by installing on a clean
@@ -66,9 +66,11 @@ python examples/train.py --task go2_stabilize --num-envs 256 --steps 500000 \
     --net 128,128,128 --ent-coef 0 --no-adaptive-lr --no-wandb
 ```
 
-Trainers: `examples/train.py` (safety layer, safety_sb3 learners),
-`examples/train_nominal.py` (nominal task policies, vanilla SB3),
-`examples/eval_filter.py` (value-filter composition). See README/PORTING.md.
+Trainers: `examples/train.py` (every task — it routes on the RL family, then on
+the task's `mode`: safety_sb3 learners for the safety modes, stock SB3 PPO for
+`mode="cumulative"` task policies), `examples/train_nominal.py` (DEPRECATED shim
+-> `train.py --family on_policy`), `examples/eval_filter.py` (value-filter
+composition). See README/PORTING.md.
 
 ## Notes & known deviations
 

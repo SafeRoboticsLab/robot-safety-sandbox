@@ -12,19 +12,22 @@ The registry contract (`robot_safety_sandbox/registry.py`):
 register(TaskSpec(
   task_id="my_task",
   cfg_builder=my_env_cfg,          # (play: bool) -> ManagerBasedRlEnvCfg
-  margin_fn=my_margins,            # (env) -> (g, l)   [None for kind="nominal"]
-  default_algo="ReachAvoidPPO",    # the PROBLEM: SafetyPPO/IsaacsPPO = avoid,
-                                   # ReachAvoidPPO/GameplayPPO = reach-avoid.
-                                   # --adversary swaps in the 2-player learner
-                                   # of the SAME problem (see registry.algo_name)
-  kind="safety",                   # "safety" (margins) | "nominal" (dense)
+  margin_fn=my_margins,            # (env) -> (g, l)  [None for mode="cumulative"]
+  mode="reach-avoid",              # which BACKUP values it: "safety" (avoid),
+                                   # "reach-avoid", or "cumulative" (plain RL on
+                                   # the dense env reward -- the task policy a
+                                   # filter wraps). --adversary swaps in the
+                                   # 2-player learner of the SAME mode (see
+                                   # registry.algo_name); default_algo is derived
+                                   # from the mode.
   supports_adversary=False,
 ))
 ```
 
-Then `examples/train.py --family on_policy --task my_task` (safety) or `train_nominal.py`
-(nominal) just work; `make_tensor("my_task", num_envs=2048)` builds the
-GPU-resident env.
+Then `examples/train.py --family on_policy --task my_task` just works for EVERY
+mode (the trainer branches on it: a safety_sb3 learner for the safety modes,
+stock SB3 PPO for `"cumulative"`); `make_tensor("my_task", num_envs=2048)` builds
+the GPU-resident env.
 
 ## 1. Margin functions (g and l)
 
@@ -147,7 +150,7 @@ closed kinematic loops and payload variants) are the two references:
    action scales), `get_<robot>_robot_cfg()`.
 3. Env builders under `envs/<robot>_<task>/`; margins next to them or in a
    task module under `tasks/`.
-4. `TaskSpec` registrations (+ a `kind="nominal"` dense twin under
-   `nominal/` if you'll run filters).
+4. `TaskSpec` registrations (+ a `mode="cumulative"` dense twin next to them
+   in the same `tasks/` module if you'll run filters).
 5. Verify: import + `list_tasks()`, cfg construction both modes, one
    `make_tensor(..., num_envs=8)` reset/step on GPU.
