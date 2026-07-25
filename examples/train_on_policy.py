@@ -105,7 +105,7 @@ def _train_cumulative(args, outdir):
   ``SafetyPPO1P(mode="cumulative")``. The two are numerically identical
   (safety_sb3's cumulative buffer reproduces SB3's GAE bit-for-bit), so the
   class choice is free — and stock PPO keeps the checkpoint a plain SB3 zip,
-  which (a) examples/eval_filter.py reads with ``PPO.load`` and (b) stays
+  which (a) examples/eval.py's ``--nominal`` reads with ``PPO.load`` and (b) stays
   loadable in an install without safety_sb3. Do NOT "upgrade" this to a safety
   learner: it would change the saved artifact format.
   """

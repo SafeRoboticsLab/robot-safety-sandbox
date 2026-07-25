@@ -15,7 +15,7 @@ there is exactly ONE concrete filter class:
 The standard recipes are just triples, and the builders below assemble them:
 
   safety_value_filter    PolicyFallback + ValueMonitor  + LeastRestrictive
-                         — the workhorse; what examples/eval_filter.py deploys.
+                         — the workhorse; examples/eval.py --filter value.
   safety_critic_filter   PolicyFallback + CriticMonitor + LeastRestrictive
                          — the switching filter on an off-policy Q.
   qcbf_filter            PolicyFallback + CriticMonitor + QCBFIntervention

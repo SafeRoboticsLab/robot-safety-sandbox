@@ -1,7 +1,7 @@
 # Go2 blind flat-terrain velocity walker (mode: cumulative) — the TASK policy
 # pi_task that the gap safety filter wraps. Plain reward-maximizing RL on the
 # env's dense reward with STOCK stable_baselines3 PPO, so the checkpoint stays a
-# vanilla SB3 zip (what examples/eval_filter.py loads with PPO.load).
+# vanilla SB3 zip (what examples/eval.py's --nominal loads with PPO.load).
 #   python examples/train.py --config configs/go2_walker_flat.yaml
 family: on_policy        # PPO family — the train.py router reads this
 task: go2_walker_flat    # mode="cumulative" -> the trainer's plain-RL branch

@@ -6,7 +6,7 @@ commanded velocity, knows nothing about gaps. Plain reward-maximizing RL — the
 CUMULATIVE backup (reward + gamma*V'), i.e. stock SB3 PPO on the env's dense
 reward stack. The safety twins (go2_gap_chain_avoid / go2_gap_chain_ra) supply
 the obstacle handling at deploy time via the value filter
-(examples/eval_filter.py).
+(examples/eval.py --nominal).
 
 Env cfgs: envs/velocity/go2.py.
 """

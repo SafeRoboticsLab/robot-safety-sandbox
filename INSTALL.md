@@ -69,8 +69,9 @@ python examples/train.py --family on_policy --task go2_stabilize \
 
 Trainers: `examples/train.py` (every task — it routes on the RL family, then on
 the task's `mode`: safety_sb3 learners for the safety modes, stock SB3 PPO for
-`mode="cumulative"` task policies), `examples/eval_filter.py` (value-filter
-composition). See README/PORTING.md.
+`mode="cumulative"` task policies), `examples/eval.py` (the evaluation
+harness: env + filter + nominal + attack, all chosen independently). See
+README/PORTING.md.
 
 ## Notes & known deviations
 

@@ -83,11 +83,14 @@ python examples/train.py --family on_policy --task go2_gap_chain --adversary
 python examples/train.py --family on_policy --task go2_gap_brake_or_jump_ra   --load runs/go2_gap_crossing/final_model.zip
 python examples/train.py --family on_policy --task go2_gap_brake_or_jump_avoid --load runs/go2_gap_crossing/final_model.zip
 
-# evaluate: value ordering + cross/fall rates, and the live safety filter
+# evaluate: the critic's value ordering across a momentum sweep
 python examples/eval_brake_or_jump_value.py --task go2_gap_brake_or_jump_ra_w30 \
     --ra-model runs/<ra_run>/final_model.zip --avoid-model runs/<avoid_run>
-python examples/eval_brake_or_jump_filter.py --safety runs/<ra_run>/final_model.zip \
-    --spawn-x-rel -0.8 --cmd-vx 0.85 --out ra.mp4
+# the live safety filter: the blind walker approaching the gap, filtered
+python examples/eval.py --preset gap_gauntlet --task go2_gap_brake_or_jump_ra_w30 \
+    --twin runs/<ra_run>/final_model.zip --nominal runs/go2_walker_flat/final_model.zip \
+    --spawn-x -0.8 -0.8 --cmd-vx 0.85 --island-length 3.0 --gap-full-pose \
+    --gap-x 0.0 --rest-x 1.2 --num-envs 6 --video ra.mp4
 ```
 
 ```python

@@ -1,6 +1,13 @@
 """Split-test value-ordering probe: at near-edge decision states across a
 momentum sweep, what does each critic VALUE crossing, and does the policy cross?
 
+NOT a filter evaluation -- there is no nominal policy, no filter and no rollout
+of a filtered controller here, which is why it is a separate script from
+``examples/eval.py``: it teleports the robot into a bank of harvested decision
+states (``envs/go2_gap/brake_or_jump``'s own replay machinery) and reads the
+critic. It shares only CHECKPOINT LOADING with the harness, and now takes that
+from ``robot_safety_sandbox.eval``.
+
 For each spawn momentum it reports V(spawn), the realized crossing rate, and the
 death (safety-failure) rate. The reach-avoid twin should cross from standstill
 with a certificate backed by realized crossings; an avoid-only twin (and a
@@ -10,7 +17,7 @@ critic over-certifies the non-crossing state.
 Pass --ra-model (reach-avoid) plus optional --avoid-model / --buggy-model
 SafetyPPO1P/ReachAvoidPPO1P run dirs to contrast against.
 
-  python examples/eval_split_value_ordering.py --task go2_gap_brake_or_jump_ra_w30 \
+  python examples/eval_brake_or_jump_value.py --task go2_gap_brake_or_jump_ra_w30 \
       --ra-model runs/<ra_run>/final_model.zip --avoid-model runs/<avoid_run>
 """
 import argparse
@@ -21,10 +28,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch as th
 
-from safety_sb3 import SafetyPPO1P, ReachAvoidPPO1P
-from robot_safety_sandbox.registry import spec
 from robot_safety_sandbox.base import MjlabTensorSafetyEnv
 from robot_safety_sandbox.envs.go2_gap import brake_or_jump as S
+from robot_safety_sandbox.eval import load_twin
+from robot_safety_sandbox.registry import spec
 
 DEV, N, STEPS = "cuda:0", 512, 130
 X0 = -0.10                                   # near edge (minimal runway)
@@ -66,53 +73,39 @@ def spawn(s_val):
   return env.step_tensor(th.zeros(N, 12, device=DEV))[0]
 
 
-def _find_stats(zp):
-  """Locate the obs-normalization stats for a model zip.
-  Finals: tensornormalize.pt alongside. Checkpoints: tensornorm_<step>.pt in the
-  same dir — pick the one whose step is closest to the model's step."""
-  d = os.path.dirname(zp)
-  flat = os.path.join(d, "tensornormalize.pt")
-  if os.path.exists(flat):
-    return flat
-  import re, glob
-  m = re.search(r"model_(\d+)_steps", os.path.basename(zp))
-  step = int(m.group(1)) if m else 0
-  cands = glob.glob(os.path.join(d, "tensornorm_*.pt"))
-  if not cands:
-    raise FileNotFoundError(f"no tensornorm stats near {zp}")
-  key = lambda c: abs(int(re.search(r"tensornorm_(\d+)", c).group(1)) - step)
-  return min(cands, key=key)
+def load(run_dir=None, zip_path=None):
+  """The twin + its obs normalizer, via the shared loader.
 
-
-def load(cls, run_dir=None, zip_path=None):
+  ``load_twin`` reconstructs the MAP cell from the checkpoint itself, so the
+  learner class no longer has to be named per model here, and it finds the
+  tensornorm stats belonging to THIS checkpoint (a mid-training checkpoint gets
+  its own ``tensornorm_<step>.pt``, not the end-of-training one)."""
   zp = zip_path or os.path.join(run_dir, "final_model.zip")
-  model = cls.load(zp, device=DEV, custom_objects={"tensorboard_log": None})
-  st = th.load(_find_stats(zp), map_location=DEV, weights_only=True)
-  return model, st["obs_mean"], st["obs_var"]
+  return load_twin(zp, DEV)
 
 
-TW = [("corr-RA ", ReachAvoidPPO1P, dict(zip_path=args.ra_model))]
+TW = [("corr-RA ", dict(zip_path=args.ra_model))]
 if args.avoid_model:
-  TW.insert(0, ("avoid   ", SafetyPPO1P, dict(run_dir=args.avoid_model)))
+  TW.insert(0, ("avoid   ", dict(run_dir=args.avoid_model)))
 if args.buggy_model:
-  TW.insert(-1, ("buggy-RA", ReachAvoidPPO1P, dict(run_dir=args.buggy_model)))
+  TW.insert(-1, ("buggy-RA", dict(run_dir=args.buggy_model)))
 
-for name, Cls, kw in TW:
+for name, kw in TW:
   try:
-    model, mean, var = load(Cls, **kw)
+    model, norm = load(**kw)
   except Exception as e:
     print(f"\n===== {name}: LOAD FAILED -> {e}"); continue
   print(f"\n===== {name}   V(spawn) / cross  vs momentum =====")
   vs = []
   for sv in SS:
     obs = spawn(sv)
-    o = th.clamp((obs.float() - mean) / th.sqrt(var + 1e-8), -10, 10)
+    o = norm(obs.float())
     with th.no_grad():
       V = model.policy.predict_values(o).squeeze(-1).mean().item()
     crossed = th.zeros(N, dtype=th.bool, device=DEV)
     died = th.zeros(N, dtype=th.bool, device=DEV)   # safety failure (g<0): charge-and-die
     for _ in range(STEPS):
-      o = th.clamp((obs.float() - mean) / th.sqrt(var + 1e-8), -10, 10)
+      o = norm(obs.float())
       with th.no_grad():
         a = th.clamp(model.policy._predict(o, deterministic=True), -1, 1)
       obs, g, _term, _trunc, _l = env.step_tensor(a)

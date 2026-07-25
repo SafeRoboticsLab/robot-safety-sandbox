@@ -47,7 +47,7 @@ class LeastRestrictiveIntervention(Intervention):
   """Latched eps-switch on the monitored margin, with a caution band.
 
   The protocol proven out by the gap/crawl filter gauntlets (the library form
-  of examples/eval_filter.py's original BatchValueFilter):
+  of the original eval_filter.py BatchValueFilter):
 
     engage   when median-smoothed Delta <= eps  (or raw Delta clearly below)
     release  when Delta > eps + hysteresis AND the robot is near rest

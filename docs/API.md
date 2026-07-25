@@ -272,3 +272,57 @@ tensor eval env — ~30× over the old settings at 1024 envs).
 
 PPO recipe that works (hard-won): `normalize_obs=True` (obs only), `ent_coef=1e-4`,
 `log_std_init=ln(0.3)`, `adaptive_lr=True`, `n_steps=48`. See README.
+
+---
+
+## 8. Evaluation
+
+One entry point, `examples/eval.py`, over four axes chosen **independently**.
+Nothing about a particular terrain lives in the harness
+(`robot_safety_sandbox/eval/`); a task's own configuration is an `EvalPreset`
+registered by the task that owns it.
+
+| axis | flag | module |
+|---|---|---|
+| environment | `--task` / `--preset` / `--env-override` | `eval/envs.py` |
+| nominal `pi_task` | `--nominal` (or `--nominal-from-twin`) | `eval/policies.py` |
+| filter | `--filter {value,critic,qcbf,rollout,gameplay}` | `eval/filters.py` |
+| attack | `--dstb {none,random,policy}` `--dstb-scale` | `eval/runner.py` |
+| metrics | automatic (+ the preset's extras) | `eval/metrics.py` |
+
+```bash
+# flat ground, walking under a swept adversarial attack
+python examples/eval.py --task go2_locomote --adversary \
+    --nominal runs/go2_walker_flat/final_model.zip \
+    --twin runs/go2_stabilize_sac2p/final_model.zip \
+    --filter gameplay --dstb policy --dstb-scale 0.5 --num-envs 256
+# the gap gauntlet (E021) — a preset, not a script
+python examples/eval.py --preset gap_gauntlet --filter value \
+    --nominal runs/go2_walker_flat/final_model.zip \
+    --twin runs/go2_gap_chain_ra/final_model.zip --gap-width 0.35 --n-gaps 1
+# the control arm
+python examples/eval.py ... --no-filter
+```
+
+The env is always a `MjlabTensorSafetyEnv`, never a raw `ManagerBasedRlEnv`:
+that is what supplies the task's `(g, l)` under the training contract, the
+**live** `[ctrl, dstb]` action space (so a disturbance is *delivered*, not just
+predicted inside a shadow rollout), and obs-group auto-detection — no call site
+names an obs group.
+
+**`--dstb-scale`** is the attack-strength knob, so a robustness result is a
+curve rather than a point. It reaches the physics on whichever channel the task
+uses: a `wrench` disturbance is unit-normalized before scaling, so the knob is
+the bridge's `force_scale` (delivered force `= force_max * scale`); an `action`
+disturbance is scaled directly.
+
+Metrics are the CBF-DDP comparison protocol — `task_success` and `safe_rate`
+from the task's own margins, per-actuator `jerk` (mean ± std, from simulated
+joint accelerations), `intervention_mass` = `||pi_task − pi_filtered||₁`,
+wall-clock per control step split filter/env, and engagement/caution rates.
+Add a task's own reading by registering an `EvalPreset` with a `metrics` hook
+(e.g. the gap's crossing/livelock rates in `envs/go2_gap/eval_gauntlet.py`).
+
+Evaluation runs are **not** bit-reproducible: mjlab keeps observation noise on
+in play mode and mujoco_warp is not bit-deterministic, so repeat runs of the
+*same* command differ. Compare configurations over several runs, not once.

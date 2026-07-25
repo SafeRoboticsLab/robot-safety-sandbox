@@ -53,3 +53,8 @@ def register_all() -> None:
     margin_fn=compose(g, l_rest), mode=REACH_AVOID,
     supports_adversary=True,
     description="Chain + worst-case base-force adversary (pinned curricula)."))
+  # The filter GAUNTLET on this family (examples/eval.py --preset gap_gauntlet):
+  # the terrain surgery and the crossing/livelock metrics are gap-specific and
+  # live with the terrain, registered here like the tasks themselves.
+  from robot_safety_sandbox.envs.go2_gap.eval_gauntlet import register_preset
+  register_preset()

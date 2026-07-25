@@ -122,7 +122,8 @@ class MyGapTerrainCfg(SubTerrainCfg):
 
 Wire it via the terrain generator's `sub_terrains` dict in your cfg builder.
 `difficulty` (0..1) is driven by the curriculum; pin it for eval by setting
-`gap_width_range=(w, w)` (see `examples/eval_filter.py`). Curriculum
+`gap_width_range=(w, w)` (see the `gap_gauntlet` eval preset in
+`envs/go2_gap/eval_gauntlet.py`). Curriculum
 promotion predicates must measure **composed task success** — promoting on
 timeouts alone gets exploited by standing still.
 

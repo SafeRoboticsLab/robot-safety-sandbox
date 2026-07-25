@@ -220,6 +220,12 @@ class _MjlabCore:
     self._hyb_latch = torch.zeros(int(num_envs), dtype=torch.bool, device=device)
     self._last_l = None
     obs_dict, _ = self.mj.reset()
+    # The FULL obs dict of the last transition. The bridges expose one group
+    # (self.obs_key) because a learner consumes one; an EVALUATION composes two
+    # policies that may read DIFFERENT groups (a blind nominal walker off
+    # "actor", a safety twin off "proprioception"), so the dict is kept rather
+    # than re-derived by stepping the raw env a second time. Read-only.
+    self._obs_dict = obs_dict
     if self.obs_key is None:
       # Obs group naming is per-task-family ("proprioception" in the parkour
       # cfgs, "actor"/"policy" in velocity-style cfgs). Auto-detect the actor
@@ -293,6 +299,7 @@ class _MjlabCore:
         ctrl = torch.where(self._hyb_latch.unsqueeze(-1),
                            a_f * self.ctrl_gain, ctrl)
     obs_dict, _r, terminated, truncated, extras = self.mj.step(ctrl)
+    self._obs_dict = obs_dict
     obs = obs_dict[self.obs_key].float()
     self.mj._zoo_last_obs = obs
     if self.dense_reward:
@@ -311,6 +318,11 @@ class _MjlabCore:
       self._hyb_latch &= ~done
       self._last_l = l
       self._log["hybrid/latched_frac"] = float(self._hyb_latch.float().mean())
+    # mjlab auto-resets INSIDE self.mj.step, which clears the termination
+    # manager's buffers — so the only correct source for "what ended this step"
+    # is the step's own return, kept here for callers that do not consume it
+    # (see MjlabTensorSafetyEnv.step_tensor's collapsed dones/timeouts).
+    self._last_terminated, self._last_truncated = terminated, truncated
     log = extras.get("log", {})
     for k, v in log.items():
       try:
@@ -318,6 +330,15 @@ class _MjlabCore:
       except (TypeError, ValueError):
         pass
     return obs, g, terminated, truncated, l
+
+  def obs_groups(self) -> dict:
+    """The FULL obs dict of the last transition (every group the cfg emits).
+
+    ``step``/``reset`` return only ``self.obs_key``'s group because a learner
+    consumes one; an evaluation composing two policies over different groups
+    reads the rest here. See :mod:`robot_safety_sandbox.eval.envs`.
+    """
+    return self._obs_dict
 
   def metrics(self) -> dict[str, float]:
     out, self._log = self._log, {}
@@ -362,6 +383,7 @@ class MjlabTensorSafetyEnv(_MjlabCore, TensorVecEnv):
 
   def reset(self) -> torch.Tensor:
     obs_dict, _ = self.mj.reset()
+    self._obs_dict = obs_dict
     obs = obs_dict[self.obs_key].float()
     self.mj._zoo_last_obs = obs
     self._hyb_latch.zero_()
@@ -406,6 +428,7 @@ class MjlabNumpySafetyEnv(_MjlabCore, VecEnv):
 
   def reset(self):
     obs_dict, _ = self.mj.reset()
+    self._obs_dict = obs_dict
     return obs_dict[self.obs_key].float().cpu().numpy()
 
   def step_async(self, actions):
