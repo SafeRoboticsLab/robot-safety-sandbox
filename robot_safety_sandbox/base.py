@@ -36,12 +36,12 @@ from mjlab.envs import ManagerBasedRlEnv
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 
-# The tensor bridge pairs with safety_sb3 learners; the NUMPY bridge (nominal
+# The tensor bridge pairs with safety_sb3 learners; the NUMPY bridge (cumulative
 # task policies, vanilla SB3) must work without safety_sb3 installed.
 try:
   from safety_sb3.tensor_env import TensorVecEnv
   _HAS_SAFETY_SB3 = True
-except ImportError:  # nominal-only install: tensor path disabled
+except ImportError:  # cumulative-only install: tensor path disabled
   TensorVecEnv = object
   _HAS_SAFETY_SB3 = False
 
@@ -152,8 +152,9 @@ def build_task_cfg(cfg_builder: Callable, margin_fn: Callable, num_envs: int,
   if not dense:
     if margin_fn is None:
       raise ValueError(
-        "margin_fn=None with dense=False: nominal tasks (kind='nominal') "
-        "train on the dense env reward — use train_nominal.py / dense mode.")
+        "margin_fn=None with dense=False: a mode='cumulative' task trains on "
+        "the dense env reward — build it in dense mode (make_tensor/make_numpy "
+        "do this automatically from the task's mode).")
     cfg.rewards["zoo_safety_hook"] = RewardTermCfg(
       func=safety_margin_hook, weight=1.0, params={"margin_fn": margin_fn})
     if end_criterion == "reach-avoid":
@@ -185,7 +186,7 @@ class _MjlabCore:
     self.force_max = float(force_max)
     # dstb channel: "wrench" = external force on adversary_body (legged tasks);
     # "action" = ACTION-ADDITIVE disturbance, ctrl += dstb_gain * a_dstb — the
-    # Robust-Gymnasium / classic-control ISAACS convention (e.g. hopper +-25%
+    # Robust-Gymnasium / classic-control two-player convention (e.g. hopper +-25%
     # of the ctrl bound). MuJoCo clamps ctrl to ctrlrange afterward.
     self.dstb_mode = str(dstb_mode)
     self.dstb_gain = float(dstb_gain)
@@ -256,13 +257,13 @@ class _MjlabCore:
     Relative paths resolve against the zoo repo root."""
     if self._hyb is None:
       import os
-      from safety_sb3 import SafetyPPO
+      from safety_sb3 import SafetyPPO1P
       root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
       d = os.path.expanduser(self.hybrid_skill)
       if not os.path.isabs(d):
         d = os.path.join(root, d)
       device = self.mj.device
-      pol = SafetyPPO.load(os.path.join(d, "final_model.zip"), device=device,
+      pol = SafetyPPO1P.load(os.path.join(d, "final_model.zip"), device=device,
                            custom_objects={"tensorboard_log": None}).policy
       pol.set_training_mode(False)
       st = torch.load(os.path.join(d, "tensornormalize.pt"),
@@ -334,7 +335,8 @@ class _MjlabCore:
 
 class MjlabTensorSafetyEnv(_MjlabCore, TensorVecEnv):
   """GPU-resident bridge (primary): torch end-to-end, no numpy bounce.
-  Pair with safety_sb3 SafetyPPO / ReachAvoidPPO (auto-detected)."""
+  Pair with a safety_sb3 1P learner, SafetyPPO1P / ReachAvoidPPO1P
+  (auto-detected)."""
 
   def __init__(self, num_envs=2048, device="cuda:0", *, cfg_builder,
                margin_fn, ctrl_dim=12, dstb_dim=3, ctrl_gain=3.0,

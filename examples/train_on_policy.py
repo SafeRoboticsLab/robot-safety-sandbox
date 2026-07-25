@@ -8,9 +8,9 @@
 It dispatches on the TASK's ``mode`` (registry.MODES), the two branches sharing
 one argparse / config / wandb / checkpoint plumbing:
 
-  safety / reach-avoid  the GPU-resident tensor bridge + a safety_sb3 learner
-                        (Safety/ReachAvoid/Isaacs/Gameplay PPO, resolved from
-                        the mode x --adversary).
+  safety / reach-avoid  the GPU-resident tensor bridge + the safety_sb3 learner
+                        the MAP resolves to — {Safety,ReachAvoid}PPO{1P,2P},
+                        mode x --adversary (see registry.algo_name).
   cumulative            plain reward-maximizing RL: the numpy bridge in dense
                         mode + STOCK stable_baselines3 PPO (see
                         :func:`_train_cumulative` — the checkpoint stays a
@@ -65,33 +65,18 @@ from robot_safety_sandbox.callbacks import (  # noqa: E402
 # safety_sb3 supplies the SAFETY learners, and is OPTIONAL at import time: a
 # CUMULATIVE-only install (dense-reward task policies on stock SB3, see base.py)
 # trains through this same trainer, so a missing safety_sb3 must not break the
-# import — ALGOS just stays empty and the safety branch fails loud below.
-ALGOS = {}
+# import — it stays None and the safety branch fails loud below. The class is
+# then looked up BY NAME (algo_name's MAP formula), so an install that lacks one
+# cell fails with that cell's name rather than an import-time traceback.
 try:
-  from safety_sb3 import IsaacsPPO, ReachAvoidPPO, SafetyPPO  # noqa: E402
-
-  ALGOS.update({"SafetyPPO": SafetyPPO, "ReachAvoidPPO": ReachAvoidPPO})
-  # The two-player learners need safety_sb3 >= v0.2.0, where the 2x2 (avoid /
-  # reach-avoid) x (1P / 2P) is complete. v0.2.0 also RENAMED the two-player
-  # reach-avoid game IsaacsPPO -> GameplayPPO and reused the name IsaacsPPO for
-  # the two-player AVOID game (ISAACS eq. 7). So on v0.1.0 `IsaacsPPO` still
-  # imports and still trains — as the WRONG problem. Gate on GameplayPPO's
-  # presence (the v0.2.0 tell) rather than trusting the name.
-  try:
-    from safety_sb3 import GameplayPPO  # noqa: E402
-
-    ALGOS["GameplayPPO"] = GameplayPPO
-    ALGOS["IsaacsPPO"] = IsaacsPPO
-  except ImportError:
-    pass  # v0.1.0: leave both two-player learners UNAVAILABLE (fail closed)
+  import safety_sb3 as _safety_sb3  # noqa: E402
 except ImportError:
-  pass  # no safety_sb3: only mode="cumulative" tasks are trainable here
+  _safety_sb3 = None
 
 # --- mode="cumulative" (plain reward-maximizing RL) -------------------------
 # This trainer's own defaults are the SAFETY recipe; a cumulative task keeps the
-# vanilla-PPO recipe (what examples/train_nominal.py used before it became a
-# shim onto this trainer). Applied as argparse DEFAULTS, so a --config file or
-# an explicit CLI flag still wins.
+# vanilla-PPO recipe. Applied as argparse DEFAULTS, so a --config file or an
+# explicit CLI flag still wins.
 _CUMULATIVE_DEFAULTS = dict(
   num_envs=1024, steps=150_000_000, lr=3e-4, ent_coef=5e-3,
   video_interval=10_000_000, adaptive_lr=False)  # stock PPO: no KL-adaptive LR
@@ -117,7 +102,7 @@ def _train_cumulative(args, outdir):
   the TASK policy a safety filter wraps.
 
   Deliberately STOCK ``stable_baselines3.PPO`` on the NUMPY bridge, not
-  ``SafetyPPO(mode="cumulative")``. The two are numerically identical
+  ``SafetyPPO1P(mode="cumulative")``. The two are numerically identical
   (safety_sb3's cumulative buffer reproduces SB3's GAE bit-for-bit), so the
   class choice is free — and stock PPO keeps the checkpoint a plain SB3 zip,
   which (a) examples/eval_filter.py reads with ``PPO.load`` and (b) stays
@@ -270,7 +255,7 @@ def main():
   p.add_argument("--terminal-type", choices=["all", "g"], default="all",
                  help="reach-avoid learners only: value a terminal step as "
                       "min(l,g) ('all', default) or g ('g'). Ignored (with a "
-                      "notice) on avoid tasks — SafetyPPO/IsaacsPPO have no l.")
+                      "notice) on avoid tasks — the Safety* learners have no l.")
   p.add_argument("--end-criterion", choices=["failure", "reach-avoid", "timeout"],
                  default=None,
                  help="WHEN the episode ends from (g,l); default = the task's "
@@ -295,7 +280,7 @@ def main():
                  help="crawl: start magnitude (N) of the forward-current force, "
                       "annealed to 0 over the run")
   p.add_argument("--dstb-pretrain", type=int, default=20,
-                 help="IsaacsPPO dstb-pretrain ROLLOUTS (keep << total rollouts)")
+                 help="2P dstb-pretrain ROLLOUTS (keep << total rollouts)")
   p.add_argument("--lr", type=float, default=5e-4)
   p.add_argument("--ent-coef", type=float, default=1e-4)
   # Safety-RL recipe knobs. Defaults keep the locomotion recipe (go2); for a
@@ -371,23 +356,21 @@ def main():
   if s.mode == CUMULATIVE:
     return _train_cumulative(args, outdir)
 
-  # Resolve the learner from the task's PROBLEM (avoid vs reach-avoid, set by
-  # its margins) x the RUN's player count (--adversary). algo_name() also
-  # refuses an avoid-only task on a reach-avoid learner, which has no valid
-  # formulation for any constant l (see margins.py).
-  algo = algo_name(args.task, adversary=args.adversary)
-  if not ALGOS:
+  # The MAP: M from the task's mode, A = PPO (this is the on-policy family),
+  # P from --adversary. algo_name() also refuses an avoid-only task on a
+  # reach-avoid learner, which has no valid formulation for any constant l
+  # (see margins.py).
+  algo = algo_name(args.task, adversary=args.adversary, family="on_policy")
+  if _safety_sb3 is None:
     raise SystemExit(
       f"'{args.task}' is a mode={s.mode!r} task and needs the '{algo}' learner, "
       f"but safety_sb3 is not installed (only mode='cumulative' tasks train "
       f"without it). Install safety-stable-baselines or set $SAFETY_SB3_PATH.")
-  if algo not in ALGOS:
+  Algo = getattr(_safety_sb3, algo, None)
+  if Algo is None:
     raise SystemExit(
       f"'{args.task}'{' +--adversary' if args.adversary else ''} needs the "
-      f"'{algo}' learner, which this safety_sb3 does not export. The "
-      f"two-player learners require safety_sb3 >= v0.2.0 (pyproject still "
-      f"pins v0.1.0, where 'IsaacsPPO' silently means the reach-avoid game "
-      f"and there is no avoid game at all). Bump the pin before training this.")
+      f"'{algo}' learner, which this safety_sb3 does not export.")
   print(f"[algo] {args.task} adversary={args.adversary} -> {algo}")
 
   env = make_tensor(args.task, args.num_envs, args.device,
@@ -396,12 +379,11 @@ def main():
   eff_ec = args.end_criterion if args.end_criterion is not None else s.end_criterion
   print(f"[end-criterion] {args.task} -> {eff_ec}"
         f"{' (override)' if args.end_criterion is not None else ' (task default)'}")
-  Algo = ALGOS[algo]
   akw = {}
   # terminal_type is a REACH-AVOID learner knob only; passing it to an avoid
-  # learner (SafetyPPO/IsaacsPPO) would be a TypeError, and it is meaningless
-  # there anyway (no l). Pass it only when the resolved algo is reach-avoid.
-  if algo in ("ReachAvoidPPO", "GameplayPPO"):
+  # learner (Safety*) would be a TypeError, and it is meaningless there anyway
+  # (no l). Pass it only when the resolved algo is a ReachAvoid* cell.
+  if algo.startswith("ReachAvoid"):
     akw["terminal_type"] = args.terminal_type
     print(f"[terminal-type] {algo} -> {args.terminal_type}")
   elif args.terminal_type != "all":

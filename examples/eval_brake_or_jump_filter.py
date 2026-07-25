@@ -8,10 +8,10 @@ freely and engage only to JUMP at the edge, where avoid-only brakes early?
 Split_v2 removes the joint-reset event, so we set the FULL standing pose (root at
 default height, spawn-x back, + default joints) or the robot folds at reset.
 
-  # avoid twin (SafetyPPO): the certificate brakes early -> robot livelocks short of the gap
+  # avoid twin (SafetyPPO1P): the certificate brakes early -> robot livelocks short of the gap
   python examples/eval_split_filter.py --safety runs/<avoid_run>/final_model.zip \
       --spawn-x-rel -0.8 --cmd-vx 0.85 --label avoid --out avoid.mp4
-  # reach-avoid twin (ReachAvoidPPO): defers to the walker, engages only to JUMP at the edge
+  # reach-avoid twin (ReachAvoidPPO1P): defers to the walker, engages only to JUMP at the edge
   python examples/eval_split_filter.py --safety runs/<ra_run>/final_model.zip \
       --spawn-x-rel -0.8 --cmd-vx 0.85 --label RA --out ra.mp4
 

@@ -1,7 +1,8 @@
 """Landing sub-task: spawn mid-air over a gap with enough forward velocity to
 reach the far platform, and learn to SOFT-LAND into a safe stance.
 
-Avoid-only SafetyPPO test (uses g(s) only, ignores l): the winning-landing
+Avoid-only test, mode="safety" -> SafetyPPO1P (uses g(s) only, ignores l): the
+winning-landing
 signal is rare and gets buried/explodes at small env counts, so this task is
 meant to be run at very large ``num_envs`` (mjlab parallelism) so enough
 successful landings appear per iteration to learn from.

@@ -2,8 +2,11 @@
 
 The two RL families are PEERS, not a main + a variant:
 
-    --family on_policy   -> train_on_policy.py   (PPO family: Safety/ReachAvoid/Isaacs/Gameplay PPO)
-    --family off_policy  -> train_off_policy.py  (SAC family: Safety/ReachAvoid/Isaacs/Gameplay SAC)
+    --family on_policy   -> train_on_policy.py   (A = PPO: {Safety,ReachAvoid}PPO{1P,2P})
+    --family off_policy  -> train_off_policy.py  (A = SAC: {Safety,ReachAvoid}SAC{1P,2P})
+
+The family is the MAP's **A**; the task's mode gives **M** and --adversary gives
+**P** (see robot_safety_sandbox/registry.py).
 
 The family is REQUIRED (there is no default "main" one): pass ``--family`` on the
 CLI (aliases: ``ppo`` -> on_policy, ``sac`` -> off_policy) or set ``family:`` in a
@@ -13,7 +16,7 @@ trainers also remain directly runnable (``python examples/train_off_policy.py ..
 
     python examples/train.py --family off_policy --task go2_stabilize --adversary
     python examples/train.py --family ppo        --task go2_gap_chain
-    python examples/train.py --config configs/go2_stabilize_gameplaysac.yaml   # family: in the yaml
+    python examples/train.py --config configs/go2_stabilize_reachavoidsac2p.yaml  # family: in the yaml
 """
 
 import argparse

@@ -162,7 +162,8 @@ class QCBFIntervention(OptIntervention):
   Differences from the reference (deliberate, both mechanical):
   - batched over N envs (per-env masks replace the scalar early returns);
   - Q convention is the zoo's "safe iff >= 0" (the reference's critics are
-    trained the same way in ISAACS, so no sign flip is actually involved).
+    trained the same way in the two-player game, so no sign flip is actually
+    involved).
 
   The legacy 1-D variant (line search on the blend (1-a) u_task + a u_safe) is
   dominated by this method (see the note's comparison) and is not ported;
@@ -171,9 +172,9 @@ class QCBFIntervention(OptIntervention):
   Practical notes:
   - Requires a CriticMonitor: the raw ``monitor.q_fn`` must be differentiable
     w.r.t. the action; one autograd call per ascent step, batched over envs.
-  - On-policy twins (SafetyPPO / ReachAvoidPPO) learn V(s), not Q(s, a): use
-    this intervention with off-policy twins (SafetySAC / ReachAvoidSAC /
-    IsaacsSAC / GameplaySAC critics) or a distilled Q head.
+  - On-policy twins (``*PPO*``) learn V(s), not Q(s, a): use this intervention
+    with an off-policy twin's critic (any of {Safety,ReachAvoid}SAC{1P,2P}) or a
+    distilled Q head.
   - A learned Q under optimization pressure is a certificate under attack (the
     Goodhart lesson): prefer an ensemble-LCB q_fn and validate against witness
     rollouts before trusting the numbers.

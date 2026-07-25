@@ -50,7 +50,7 @@ from mjlab.envs import ManagerBasedRlEnv  # noqa: E402
 from mjlab.managers.event_manager import EventTermCfg  # noqa: E402
 from mjlab.managers.scene_entity_config import SceneEntityCfg  # noqa: E402
 
-from safety_sb3 import ReachAvoidPPO, SafetyPPO  # noqa: E402
+from safety_sb3 import ReachAvoidPPO1P, SafetyPPO1P  # noqa: E402
 from robot_safety_sandbox import spec  # noqa: E402
 from robot_safety_sandbox.filters import safety_value_filter  # noqa: E402
 
@@ -161,9 +161,9 @@ def load_walker(zip_path: str, device: str):
 
 def load_safety(zip_path: str, device: str):
   try:
-    model = ReachAvoidPPO.load(zip_path, device=device)
+    model = ReachAvoidPPO1P.load(zip_path, device=device)
   except Exception:
-    model = SafetyPPO.load(zip_path, device=device)
+    model = SafetyPPO1P.load(zip_path, device=device)
   pt = zip_path.replace("final_model.zip", "tensornormalize.pt")
   if not os.path.exists(pt):
     d = os.path.dirname(zip_path)

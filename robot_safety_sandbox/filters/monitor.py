@@ -8,9 +8,10 @@ on u. Sign convention throughout the zoo: safe iff Delta >= 0.
 
 Three styles, in increasing order of cost and fidelity:
 
-  ValueMonitor    V(x) from an on-policy twin (SafetyPPO / ReachAvoidPPO).
-  CriticMonitor   Q(x, u) from an off-policy twin (SafetySAC / ReachAvoidSAC /
-                  IsaacsSAC / GameplaySAC). Also exposes the raw differentiable
+  ValueMonitor    V(x) from an on-policy twin (SafetyPPO1P / ReachAvoidPPO1P,
+                  or their 2P counterparts).
+  CriticMonitor   Q(x, u) from an off-policy twin (any of the four SAC cells:
+                  {Safety,ReachAvoid}SAC{1P,2P}). Also exposes the raw differentiable
                   ``q_fn`` so an optimization-based intervention can take
                   dQ/du through it.
   RolloutMonitor  simulate the fallback for H steps from the successor state

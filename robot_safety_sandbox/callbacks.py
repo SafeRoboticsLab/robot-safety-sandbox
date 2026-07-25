@@ -88,7 +88,8 @@ class DenseMetricsCallback(BaseCallback):
   termination / curriculum logs) to the SB3 logger -> wandb, once per rollout.
 
   Stock SB3 PPO knows nothing about the bridge's ``metrics()`` (the tensor-path
-  SafetyPPO drains it itself), so without this the per-term reward breakdown is
+  the safety learners drain it themselves), so without this the per-term reward
+  breakdown is
   collected and silently dropped. Reachable through the VecMonitor/VecNormalize
   wrappers via VecEnvWrapper attribute forwarding."""
 
@@ -226,7 +227,7 @@ class NormFreezeCallback(BaseCallback):
 
 
 class PerEnvForceScaleCallback(BaseCallback):
-  """rsl_rl-inc1b anti-collapse lever for adversarial (ISAACS) training: scale
+  """rsl_rl-inc1b anti-collapse lever for two-player (2P) training: scale
   the adversary's force PER ENV by a survival curriculum — envs that fail get
   a weaker adversary (+recover), envs that survive get a stronger one. This is
   what stabilized the reference two-player game after pinned curricula and the
@@ -331,7 +332,7 @@ class GaitThreshRampCallback(BaseCallback):
 
 
 class ForceRampCallback(BaseCallback):
-  """Adversarial (ISAACS) runs: ramp the adversary force from ``force_start``
+  """Two-player (2P) runs: ramp the adversary force from ``force_start``
   to ``force_max`` over ``ramp_steps`` so ctrl adapts to a strengthening
   attacker instead of collapsing under the full bound from step one."""
 

@@ -8,7 +8,7 @@ reach-avoid twin trained under the g-anchor bug) stalls at low momentum while it
 critic over-certifies the non-crossing state.
 
 Pass --ra-model (reach-avoid) plus optional --avoid-model / --buggy-model
-SafetyPPO/ReachAvoidPPO run dirs to contrast against.
+SafetyPPO1P/ReachAvoidPPO1P run dirs to contrast against.
 
   python examples/eval_split_value_ordering.py --task go2_gap_brake_or_jump_ra_w30 \
       --ra-model runs/<ra_run>/final_model.zip --avoid-model runs/<avoid_run>
@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch as th
 
-from safety_sb3 import SafetyPPO, ReachAvoidPPO
+from safety_sb3 import SafetyPPO1P, ReachAvoidPPO1P
 from robot_safety_sandbox.registry import spec
 from robot_safety_sandbox.base import MjlabTensorSafetyEnv
 from robot_safety_sandbox.envs.go2_gap import brake_or_jump as S
@@ -35,9 +35,9 @@ p.add_argument("--ra-model", required=True, help="corrected-RA checkpoint .zip")
 p.add_argument("--task", default="go2_gap_brake_or_jump_ra",
                help="split task (sets gap width): _ra / _ra_w20 / _ra_w30")
 p.add_argument("--avoid-model", default=None,
-               help="optional SafetyPPO avoid run dir to contrast against")
+               help="optional SafetyPPO1P avoid run dir to contrast against")
 p.add_argument("--buggy-model", default=None,
-               help="optional (g-anchor) ReachAvoidPPO run dir to contrast against")
+               help="optional (g-anchor) ReachAvoidPPO1P run dir to contrast against")
 p.add_argument("--n", type=int, default=N)
 args = p.parse_args()
 N = args.n
@@ -91,11 +91,11 @@ def load(cls, run_dir=None, zip_path=None):
   return model, st["obs_mean"], st["obs_var"]
 
 
-TW = [("corr-RA ", ReachAvoidPPO, dict(zip_path=args.ra_model))]
+TW = [("corr-RA ", ReachAvoidPPO1P, dict(zip_path=args.ra_model))]
 if args.avoid_model:
-  TW.insert(0, ("avoid   ", SafetyPPO, dict(run_dir=args.avoid_model)))
+  TW.insert(0, ("avoid   ", SafetyPPO1P, dict(run_dir=args.avoid_model)))
 if args.buggy_model:
-  TW.insert(-1, ("buggy-RA", ReachAvoidPPO, dict(run_dir=args.buggy_model)))
+  TW.insert(-1, ("buggy-RA", ReachAvoidPPO1P, dict(run_dir=args.buggy_model)))
 
 for name, Cls, kw in TW:
   try:

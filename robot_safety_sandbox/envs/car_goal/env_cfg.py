@@ -1,7 +1,7 @@
 """car_goal: a differential-drive car that must REACH a goal disk while AVOIDING
 obstacle cylinders -- the mjlab-zoo, reach-avoid analog of ``bicycle5d.py``.
 
-Single-player reach-avoid (ReachAvoidPPO, 2 wheel-velocity controls):
+Single-player reach-avoid (ReachAvoidPPO1P, 2 wheel-velocity controls):
 
   g(s) = signed distance from the car to the nearest obstacle, normalized.
          g >= 0 == not in collision.  Rides on ``reward`` (the safety hook).

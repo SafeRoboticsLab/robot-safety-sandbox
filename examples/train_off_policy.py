@@ -1,27 +1,30 @@
-"""Unified SAC trainer: ALL FOUR SAC-family safety learners (the SAC analog of
-`train.py`, which is PPO-only).
+"""Unified SAC trainer: ALL FOUR SAC-family safety learners — the off-policy
+half of the MAP (Mode. Algorithm. Players.), A = SAC.
 
-The 2x2 SAC taxonomy (problem x players), resolved from the task's margins
-(avoid vs reach-avoid) x the run's player count (--adversary):
+The task's mode supplies M, `--adversary` supplies P; the four cells are:
 
                  1-player            2-player (--adversary)
-    avoid        SafetySAC           IsaacsSAC
-    reach-avoid  ReachAvoidSAC       GameplaySAC
+    avoid        SafetySAC1P         SafetySAC2P
+    reach-avoid  ReachAvoidSAC1P     ReachAvoidSAC2P
 
-  # 1-player reach-avoid (ReachAvoidSAC)
-  python examples/train_sac.py --task go2_stabilize --steps 100000000 --seed 0
-  # 2-player reach-avoid (GameplaySAC) -- the E042 config
-  python examples/train_sac.py --task go2_stabilize --adversary --num-envs 1024
-  # 1-player avoid (SafetySAC) / 2-player avoid (IsaacsSAC)
-  python examples/train_sac.py --task digit_stabilize_avoid [--adversary]
+  # 1-player reach-avoid (ReachAvoidSAC1P)
+  python examples/train_off_policy.py --task go2_stabilize --steps 100000000 --seed 0
+  # 2-player reach-avoid (ReachAvoidSAC2P) -- the E042 config
+  python examples/train_off_policy.py --task go2_stabilize --adversary --num-envs 1024
+  # 1-player avoid (SafetySAC1P) / 2-player avoid (SafetySAC2P)
+  python examples/train_off_policy.py --task digit_stabilize_avoid [--adversary]
 
-This generalizes `train_gameplay_sac.py` (GameplaySAC-only). The crux vs that
-script is VARIANT-CONDITIONAL construction: the two-player classes take
-`ctrl_action_dim`, per-agent LRs, and the numpy leaderboard eval env + adversary
-force curriculum; the single-player classes take none of those (they'd TypeError)
-and there is no adversary. Everything else (SAC hypers, gamma anneal, alpha
-floor/ceil, the SafeSuccessRateEvalCallback + train->eval normalizer sync) is
-common to all four and copied verbatim from `train_gameplay_sac.py`.
+The 2P SAC game is NOT the 2P PPO game with a different optimizer: *SAC2P is the
+minimax game on ONE shared joint-action critic Q(s, [a_ctrl, a_dstb]), while
+*PPO2P is an alternating best-response approximation with two independent V(s)
+nets and a phase machine. Picking `--adversary` here gets you the former.
+
+The crux of this script is VARIANT-CONDITIONAL construction: the two-player
+classes take `ctrl_action_dim`, per-agent LRs, and the leaderboard eval env +
+adversary force curriculum; the single-player classes take none of those (they'd
+TypeError) and there is no adversary. Everything else (SAC hypers, gamma anneal,
+alpha floor/ceil, the SafeSuccessRateEvalCallback + train->eval normalizer sync)
+is common to all four.
 
 SAC hypers mirror `safe_adaptation_dev/config/go2_pybullet_isaacs_br.yaml`
 (critic_0 / actor_0 / actor_1): lr 1e-4, tau 0.01, target_update_interval 2,
@@ -60,23 +63,11 @@ from robot_safety_sandbox.callbacks import (  # noqa: E402
   VideoWandbCallback,
 )
 
-# PPO learner NAME (from algo_name, the shared 2x2 resolver) -> SAC class NAME.
-# Same problem x player cell, off-policy analog. We resolve to a name first and
-# import lazily so a missing SAC class fails with a clear message, not ImportError
-# at module load (mirrors train.py's fail-closed ALGOS gate).
-PPO_TO_SAC = {
-  "SafetyPPO": "SafetySAC",
-  "ReachAvoidPPO": "ReachAvoidSAC",
-  "IsaacsPPO": "IsaacsSAC",
-  "GameplayPPO": "GameplaySAC",
-}
-REACH_AVOID_ALGOS = {"ReachAvoidPPO", "GameplayPPO"}  # -> eval reach_avoid flag
-
-# NOTE: the leaderboard eval env is now a RAW TensorVecEnv (GameplaySAC dispatches
+# NOTE: the leaderboard eval env is a RAW TensorVecEnv (the 2P learner dispatches
 # to `_eval_pair_tensor`, on-device, normalizing obs via the live training
-# normalizer). The old numpy `_NormEvalVecEnv` wrapper is gone -- profiling showed
-# the league eval (not the numpy transfer) was the throughput bottleneck, fixed by
-# fewer eval episodes + a higher leaderboard_freq (see the --leaderboard-* defaults).
+# normalizer). Profiling showed the league eval (not the numpy transfer) was the
+# throughput bottleneck, fixed by fewer eval episodes + a higher leaderboard_freq
+# (see the --leaderboard-* defaults).
 
 
 def main():
@@ -95,9 +86,9 @@ def main():
   p.add_argument("--seed", type=int, default=0)
   p.add_argument("--device", default="cuda:0")
   p.add_argument("--adversary", action="store_true",
-                 help="run the TWO-PLAYER game (IsaacsSAC for avoid tasks, "
-                      "GameplaySAC for reach-avoid). Off = single-player "
-                      "(SafetySAC / ReachAvoidSAC).")
+                 help="run the TWO-PLAYER minimax game on a shared joint-action "
+                      "critic (SafetySAC2P for avoid tasks, ReachAvoidSAC2P for "
+                      "reach-avoid). Off = single-player (*SAC1P).")
   p.add_argument("--out", default=os.path.join(_ZOO, "runs"),
                  help="output root; ALWAYS keep runs under runs/ (git-ignored) — "
                       "never invent runs_<suffix> siblings, they escape .gitignore")
@@ -155,7 +146,7 @@ def main():
   p.add_argument("--terminal-type", choices=["all", "g"], default="all",
                  help="reach-avoid learners only: value a terminal step as "
                       "min(l,g) ('all', default) or g ('g'). Ignored on avoid "
-                      "tasks (SafetySAC/IsaacsSAC have no reach margin l).")
+                      "tasks (the Safety* cells have no reach margin l).")
   # --- safe/success-rate evaluation (logged to wandb; all four) ---
   p.add_argument("--eval-rollouts", type=int, default=100,
                  help="episodes per safe/success-rate eval (reference ~100)")
@@ -199,19 +190,18 @@ def main():
       f"'{args.task}' is a mode={CUMULATIVE!r} task (plain reward-maximizing RL "
       f"on the env's dense reward, no margins) — train it with "
       f"`train.py --family on_policy`; the SAC family here is safety-only.")
-  algo = algo_name(args.task, adversary=args.adversary)  # PPO-family name
-  if algo not in PPO_TO_SAC:
-    raise SystemExit(f"'{args.task}' resolves to '{algo}', which has no SAC analog.")
-  sac_name = PPO_TO_SAC[algo]
+  # The MAP: M from the task's mode, A = SAC (this is the off-policy family),
+  # P from --adversary. Resolve the NAME first, import lazily, so a missing cell
+  # fails with a clear message rather than an ImportError at module load.
+  sac_name = algo_name(args.task, adversary=args.adversary, family="off_policy")
   try:
     import safety_sb3 as _sb3
     Algo = getattr(_sb3, sac_name)
   except (ImportError, AttributeError):
     raise SystemExit(
       f"'{args.task}'{' +--adversary' if args.adversary else ''} needs the "
-      f"'{sac_name}' learner, which this safety_sb3 does not export. The SAC "
-      f"family (all four cells) requires safety_sb3 >= v0.2.0.")
-  reach_avoid = algo in REACH_AVOID_ALGOS
+      f"'{sac_name}' learner, which this safety_sb3 does not export.")
+  reach_avoid = sac_name.startswith("ReachAvoid")
   two_player = args.adversary
   print(f"[algo] {args.task} adversary={two_player} -> {sac_name} "
         f"(reach_avoid={reach_avoid})")
@@ -246,7 +236,7 @@ def main():
   pi_net = [int(x) for x in args.net.split(",") if x.strip()]
   qf_net = [int(x) for x in args.qf_net.split(",") if x.strip()]
 
-  # kwargs COMMON to all four (on the SafetySAC base + SAC).
+  # kwargs COMMON to all four cells (on the shared safety-SAC base + SAC).
   akw = dict(
     normalize_obs=True,
     gamma=args.gamma_init,          # anneals per --gamma-schedule
@@ -279,7 +269,7 @@ def main():
     lb_eval_n = 8 if args.smoke else args.leaderboard_eval_envs
     n_lb_episodes = 2 if args.smoke else args.leaderboard_episodes
     leaderboard_freq = 5_000 if args.smoke else args.leaderboard_freq
-    # RAW tensor eval env -> GameplaySAC._eval_pair_tensor (on-device, no numpy
+    # RAW tensor eval env -> the 2P learner's _eval_pair_tensor (on-device, no numpy
     # VecEnv, no per-step host<->device sync; obs normalized via the live
     # training normalizer inside _eval_pair_tensor -- no stats to inject).
     lb_eval = make_tensor(args.task, lb_eval_n, args.device, adversary=True,

@@ -1,9 +1,9 @@
-"""Disturbance-effect probe: is the ISAACS adversary doing anything?
+"""Disturbance-effect probe: is the trained adversary doing anything?
 
 Evaluates the trained CTRL policy under three disturbance conditions —
   none    : dstb = 0                       (the deployable-policy baseline)
   random  : dstb ~ U[-1, 1]                (naive robustness)
-  trained : dstb = the trained min-player  (worst-case, the ISAACS game)
+  trained : dstb = the trained min-player  (worst-case, the 2P game)
 — and reports survival, episode length and worst-case margin. This is the
 honest "adversarial effect" readout for survival tasks whose videos look like
 nothing (a hopper standing still): the game lives in the margin statistics,
@@ -78,6 +78,10 @@ def main():
   p.add_argument("--num-envs", type=int, default=256)
   p.add_argument("--episodes", type=int, default=512)
   p.add_argument("--device", default="cuda:0")
+  p.add_argument("--family", choices=["on_policy", "off_policy"],
+                 default="on_policy",
+                 help="which family the checkpoint was trained with (the MAP's "
+                      "A): on_policy -> *PPO2P, off_policy -> *SAC2P.")
   p.add_argument("--end-criterion",
                  choices=["failure", "reach-avoid", "timeout"], default=None,
                  help="WHEN the episode ends from (g,l); default = the task's "
@@ -89,21 +93,20 @@ def main():
   ctrl_dim = s.ctrl_dim
   env = make_tensor(args.task, args.num_envs, args.device, adversary=True,
                     end_criterion=args.end_criterion)
-  # The two-player learner for THIS task's problem: IsaacsPPO (avoid) or
-  # GameplayPPO (reach-avoid). Resolved rather than hardcoded — safety_sb3
-  # v0.2.0 reused the name IsaacsPPO for the avoid game and renamed the
-  # reach-avoid game to GameplayPPO, so a hardcoded IsaacsPPO.load would
-  # deserialize a reach-avoid checkpoint into the wrong class.
-  algo = algo_name(args.task, adversary=True)
+  # The 2P learner for THIS task, from the MAP: the task's mode gives Safety*
+  # vs ReachAvoid*, --family gives PPO vs SAC, adversary=True gives 2P.
+  # Resolved rather than hardcoded — loading an avoid checkpoint into the
+  # reach-avoid class (or vice versa) silently deserializes the wrong backup.
+  algo = algo_name(args.task, adversary=True, family=args.family)
   Algo = getattr(safety_sb3, algo, None)
   if Algo is None:
     raise SystemExit(
       f"'{args.task}' needs the '{algo}' learner, which this safety_sb3 does "
-      f"not export (two-player learners need safety_sb3 >= v0.2.0).")
+      f"not export.")
   # custom_objects neutralizes machine-specific state baked into the
   # checkpoint (absolute leaderboard/tensorboard paths from the training box).
   model = Algo.load(args.ckpt, device=args.device, custom_objects={
-    "_use_lb": False, "_lb_dir": "/tmp/isaacs_lb_probe",
+    "_use_lb": False, "_lb_dir": "/tmp/zoo_lb_probe",
     "tensorboard_log": None})
   # obs normalizer (tensornorm saved next to checkpoints)
   d = os.path.dirname(args.ckpt)
