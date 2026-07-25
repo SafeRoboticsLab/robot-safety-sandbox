@@ -22,8 +22,8 @@ sys.path.insert(0, os.path.dirname(_HERE))
 from filter_fixtures import ACT_DIM, NUM_ENVS, Fixture, ToyShadowSim  # noqa: E402
 from robot_safety_sandbox.eval import (  # noqa: E402
   FILTERS, ActuatorJerk, Engagement, EpisodeOutcomes, InterventionMass,
-  MetricSet, RolloutCfg, StepRecord, SwitchCfg, WallClock, build_filter,
-  detect_obs_key, list_presets, preset, protocol_metrics)
+  MarginStats, MetricSet, RolloutCfg, StepRecord, SwitchCfg, WallClock,
+  build_filter, detect_obs_key, list_presets, preset, protocol_metrics)
 from robot_safety_sandbox.eval.envs import (  # noqa: E402
   NOMINAL_OBS_ORDER, SAFETY_OBS_ORDER, StepOut, TwistCommandSurgery)
 from robot_safety_sandbox.eval.runner import (  # noqa: E402
@@ -155,6 +155,21 @@ def test_episode_outcomes_clears_flags_on_reset():
   assert r["episodes"] == 2 and r["censored_alive"] == 0
   assert r["violation_rate"] == pytest.approx(0.5)
   assert r["task_success"] == pytest.approx(0.5)
+
+
+def test_margin_stats_takes_the_worst_g_per_episode_and_keeps_survivors():
+  """2 envs. env0 dips to -0.5 then its episode ends and a new one starts clean;
+  env1 never finishes, so its running worst must still be counted."""
+  m = MarginStats(2, DEV)
+  T = torch.tensor
+  m.update(_rec(0, g=T([0.5, 0.9]), l=T([0.0, 0.0])))
+  m.update(_rec(1, g=T([-0.5, 0.8]), l=T([0.0, 0.0]),
+                term=T([True, False])))
+  m.update(_rec(2, g=T([1.0, 0.7]), l=T([0.0, 0.0])))
+  r = m.result()
+  # samples: env0's closed episode (-0.5), env0's live one (1.0), env1 (0.7)
+  assert r["min_g_worst"] == pytest.approx(-0.5)
+  assert r["min_g_mean"] == pytest.approx((-0.5 + 1.0 + 0.7) / 3)
 
 
 def test_intervention_mass_is_the_l1_gap_to_the_nominal():
