@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "robot-safety-sandbox"
-version = "0.3.0"
-description = "Parallelized mjlab environments for nominal-policy training, safety-policy synthesis, and safety-filter evaluation"
+version = "0.4.0"
+description = "Parallelized mjlab environments for safety-policy synthesis, task-policy training, and safety-filter evaluation"
 requires-python = ">=3.10"
 dependencies = [
   "torch",
   "numpy",
   "gymnasium",
   "stable_baselines3>=2.0",
-  "safety_sb3 @ git+https://github.com/SafeRoboticsLab/safety-stable-baselines.git@v0.3.0",
+  "safety_sb3 @ git+https://github.com/SafeRoboticsLab/safety-stable-baselines.git@v0.4.0",
   # peer dep (install separately -- needs its own pinned sim stack): mjlab
 ]
 

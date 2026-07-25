@@ -1,7 +1,9 @@
-# One-player reach-avoid PPO (ReachAvoidPPO) on go2_stabilize — the safety-PPO
-# recipe (obs-normalized, fixed LR, KL early-stop, capped action std).
-#   python examples/train.py --config configs/go2_stabilize_reachavoidppo.yaml
-# (add `adversary: true` for the two-player GameplayPPO variant.)
+# ReachAvoidPPO1P on go2_stabilize: M=ReachAvoid (the task's mode), A=PPO
+# (family: on_policy), P=1P (no adversary). The safety-PPO recipe:
+# obs-normalized, fixed LR, KL early-stop, capped action std.
+#   python examples/train.py --config configs/go2_stabilize_reachavoidppo1p.yaml
+# (add `adversary: true` for ReachAvoidPPO2P — the alternating best-response
+# game, structurally different from ReachAvoidSAC2P; see docs/API.md.)
 family: on_policy        # PPO family — the train.py router reads this
 task: go2_stabilize
 num_envs: 1024

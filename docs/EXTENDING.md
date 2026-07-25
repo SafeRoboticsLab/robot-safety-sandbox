@@ -13,13 +13,15 @@ register(TaskSpec(
   task_id="my_task",
   cfg_builder=my_env_cfg,          # (play: bool) -> ManagerBasedRlEnvCfg
   margin_fn=my_margins,            # (env) -> (g, l)  [None for mode="cumulative"]
-  mode="reach-avoid",              # which BACKUP values it: "safety" (avoid),
-                                   # "reach-avoid", or "cumulative" (plain RL on
-                                   # the dense env reward -- the task policy a
-                                   # filter wraps). --adversary swaps in the
-                                   # 2-player learner of the SAME mode (see
-                                   # registry.algo_name); default_algo is derived
-                                   # from the mode.
+  mode="reach-avoid",              # REQUIRED. Which BACKUP values it: "safety"
+                                   # (avoid), "reach-avoid", or "cumulative"
+                                   # (plain RL on the dense env reward -- the
+                                   # task policy a filter wraps). This is the
+                                   # MAP's M and the ONLY learner-related thing
+                                   # you declare: the A comes from --family and
+                                   # the P from --adversary, so this task is
+                                   # ReachAvoidPPO1P / ReachAvoidSAC2P / ... as
+                                   # the run chooses (see registry.algo_name).
   supports_adversary=False,
 ))
 ```
@@ -91,7 +93,7 @@ def my_env_cfg(play: bool = False):
 
 Observation terms are entries in `cfg.observations[group].terms` — plain
 functions `(env) -> tensor`, addable per group (`"proprioception"` for the
-safety policy, `"actor"` for a nominal). Margins may read sensors directly
+safety policy, `"actor"` for a task policy). Margins may read sensors directly
 (`env.scene["feet_ground_contact"].data.current_contact_time`), and
 certificate features should be **state-only** (no commands, no action
 history) — see `features.py` for why (OOD at filter handover otherwise).

@@ -34,10 +34,8 @@ TaskSpec(
     task_id,
     cfg_builder,          # (play: bool) -> ManagerBasedRlEnvCfg   (plain mjlab)
     margin_fn,            # (env) -> (g, l) batched tensors     (None for cumulative)
-    mode="safety",                   # which BACKUP values it (see below)
-    default_algo=None,               # DERIVED from mode; override to pin a learner
+    mode,                            # REQUIRED: which BACKUP values it (below)
     end_criterion="failure",         # when the episode ends (§4)
-    warmstart_from=None,             # previous pipeline-stage task_id
     supports_adversary=False,        # can this task take a --adversary run?
     ctrl_dim=12, dstb_dim=3,
     description="",
@@ -48,39 +46,51 @@ TaskSpec(
   Algorithm-agnostic.
 - **`margin_fn`** composes from `margins.py`. For an **avoid-only** task pass
   `compose(g_fn)` (no `l`) — see §5. It carries `has_target = (l_fn is not None)`.
-- **`mode`** is the task's single axis: the `safety_sb3.backups` mode it is
-  trained under. It picks the learner **column** (avoid vs reach-avoid); the
-  **row** (single- vs two-player) is a property of the *run* (`--adversary`),
-  resolved by `algo_name()` (§3).
+- **`mode`** is the task's single axis and the **only** thing it says about the
+  learner: the `safety_sb3.backups` mode it is trained under. It is the MAP's
+  **M** (§3); the **A** (algorithm) and **P** (players) belong to the *run*.
 
-| `mode` | backup | margins | trained by |
-|---|---|---|---|
-| `"safety"` (default) | `V = min(g, γV′)` | `margin_fn` required, no `l` | `SafetyPPO` / `IsaacsPPO` |
-| `"reach-avoid"` | `V = min(g, max(l, γV′))` | `margin_fn` required, real `l` | `ReachAvoidPPO` / `GameplayPPO` |
-| `"cumulative"` | `V = r + γ(1−d)V′` | **none** (`margin_fn=None`) | **stock** `stable_baselines3.PPO` |
+| `mode` | backup | margins | 1P learner | 2P learner |
+|---|---|---|---|---|
+| `"safety"` | `V = min(g, γV′)` | `margin_fn` required, no `l` | `SafetyPPO1P` / `SafetySAC1P` | `SafetyPPO2P` / `SafetySAC2P` |
+| `"reach-avoid"` | `V = min(g, max(l, γV′))` | `margin_fn` required, real `l` | `ReachAvoidPPO1P` / `ReachAvoidSAC1P` | `ReachAvoidPPO2P` / `ReachAvoidSAC2P` |
+| `"cumulative"` | `V = r + γ(1−d)V′` | **none** (`margin_fn=None`) | **stock** `PPO` / `SAC` | — |
 
 `mode="cumulative"` is plain reward-maximizing RL — the task policy `π_task` a
 safety filter wraps. Its envs are auto-built in **dense-reward** mode (the env's
 own reward stack instead of `g`), and it trains with **stock SB3**, keeping the
-checkpoint a vanilla SB3 zip that loads without `safety_sb3`. It replaces the
-retired `kind="nominal"` axis (and the `nominal/` package); `kind=` still works
-with a `DeprecationWarning` (`"safety"`→`"safety"`, `"nominal"`→`"cumulative"`).
+checkpoint a vanilla SB3 zip that loads without `safety_sb3`.
 
-- **`default_algo`** is derived from the mode (`safety`→`SafetyPPO`,
-  `reach-avoid`→`ReachAvoidPPO`, `cumulative`→`PPO`). Naming one explicitly is
-  allowed and, in a registration that predates `mode=`, still fixes the mode —
-  the two must agree.
+There is no `default_algo` field and no other way to pin a learner: the name is
+computed (§3). There is no `warmstart_from` either — a pipeline's warm-start
+lineage is a run-level `--load` choice, recorded in the experiment log.
 
 Register once, and both bridges work:
 
 ```python
 from robot_safety_sandbox import register, TaskSpec
-register(TaskSpec(task_id="my_task", cfg_builder=..., margin_fn=compose(g, l)))
+register(TaskSpec(task_id="my_task", cfg_builder=..., margin_fn=compose(g, l),
+                  mode="reach-avoid"))
 ```
 
 ---
 
-## 3. Registry API
+## 3. Registry API — and the MAP
+
+> **Here's a MAP to navigate the codebase — Mode. Algorithm. Players.**
+
+    M = Mode       Safety | ReachAvoid | Cumulative    the Bellman operator
+    A = Algorithm  PPO | SAC | A2C | DQN               the RL update rule
+    P = Players    1P | 2P                             single-player | zero-sum
+
+A learner's name is those three letters concatenated in that order, and each
+letter comes from exactly one place:
+
+| letter | source | how it is set |
+|---|---|---|
+| **M** | the TASK | `TaskSpec(mode=...)` — a property of its margins |
+| **A** | the RUN | `train.py --family on_policy` (PPO) / `off_policy` (SAC) |
+| **P** | the RUN | `--adversary` |
 
 ```python
 from robot_safety_sandbox import (
@@ -90,30 +100,48 @@ from robot_safety_sandbox import (
 list_tasks(mode=None) -> list[str]        # mode: one of MODES, or None (all)
 spec(task_id) -> TaskSpec
 register(TaskSpec) -> None
-algo_name(task_id, adversary=False) -> str   # the learner CLASS NAME to use
+algo_name(task_id, adversary=False, family="on_policy") -> str
 
 make_tensor(task_id, num_envs=2048, device="cuda:0", adversary=False, **kw)  # GPU, PPO family
 make_numpy (task_id, num_envs=64,   device="cuda:0", adversary=False, **kw)  # SB3 VecEnv, SAC family
 ```
 
-`algo_name` resolves both axes and is the one place the 2×2 is kept honest — the
-task's `mode` fixes the *backup*, `--adversary` fixes the *player count*:
+`algo_name` is a **formula, not a lookup** — the whole body is
 
-| task `mode` | 1-player | 2-player (`adversary=True`) |
+```python
+f"{_PREFIX[spec(task_id).mode]}{_ALG[family]}{'2P' if adversary else '1P'}"
+```
+
+so nothing in the registry can override it:
+
+| task `mode` | `family="on_policy"` 1P / 2P | `family="off_policy"` 1P / 2P |
 |---|---|---|
-| `"safety"` (avoid) | `SafetyPPO` | `IsaacsPPO` |
-| `"reach-avoid"` | `ReachAvoidPPO` | `GameplayPPO` |
-| `"cumulative"` | `PPO` (stock SB3) | — (no two-player cumulative game) |
+| `"safety"` (avoid) | `SafetyPPO1P` / `SafetyPPO2P` | `SafetySAC1P` / `SafetySAC2P` |
+| `"reach-avoid"` | `ReachAvoidPPO1P` / `ReachAvoidPPO2P` | `ReachAvoidSAC1P` / `ReachAvoidSAC2P` |
+| `"cumulative"` | `PPO` (stock SB3) / — | `SAC` (stock SB3) / — |
 
-It **refuses** a reach-avoid learner on an avoid-only task (no target set) — the
-guard against the retired `l_neg` pattern. The registry never imports `safety_sb3`
-(it re-declares the mode strings as literals, pinned by a test): `algo_name`
-returns names only, so the two layers stay decoupled and a cumulative-only
-install — dense reward + stock SB3, no `safety_sb3` — still imports the registry.
+Cumulative has no **P**: there is no two-player cumulative game, and `algo_name`
+raises rather than inventing one. It also **refuses** a reach-avoid learner on an
+avoid-only task (no target set) — the guard against the retired `l_neg` pattern.
+The registry never imports `safety_sb3` (it re-declares the mode strings as
+literals, pinned by a test): `algo_name` returns names only, so the two layers
+stay decoupled and a cumulative-only install — dense reward + stock SB3, no
+`safety_sb3` — still imports the registry.
 
-> `Isaacs*` = two-player **avoid** (ISAACS eq. 7); `Gameplay*` = two-player
-> **reach-avoid** (Gameplay Filters). These names changed meaning in safety_sb3
-> v0.2.0 — see its RELEASE_NOTES.
+### `*PPO2P` and `*SAC2P` are not interchangeable
+
+Same MAP cell, different algorithm. Read this before choosing `--adversary`:
+
+| | `*SAC2P` (off_policy) | `*PPO2P` (on_policy) |
+|---|---|---|
+| critic | **one shared joint-action critic** `Q(s, [a_ctrl, a_dstb])` | **two independent** `V(s)` nets |
+| game | minimax on that single critic — both players read the same value | alternating **best-response approximation** |
+| data | one replay buffer | two rollout buffers |
+| control flow | a single update | a ctrl/dstb **phase machine** (`ctrl_rollouts_per_cycle`, `dstb_rollouts_per_cycle`, `dstb_pretrain_rollouts`) |
+
+The shared-critic form is the closer approximation of the zero-sum value; the
+PPO form trades that for on-policy stability and needs its phase schedule tuned.
+The E042 result on `go2_stabilize` (best-ever on that task) is `ReachAvoidSAC2P`.
 
 ---
 
@@ -159,9 +187,9 @@ avoid_only(margin_fn)    # strip the target off an existing (g, l) builder
 **Avoid is not a reach-avoid instance** — do not emulate an avoid task by pinning
 `l` to a constant (`l_neg`/`l_zero`, both removed). It cannot work: a negative
 constant empties the safe set, a non-negative one strips the lookahead. An
-avoid-only task declares no `l` (`compose(g_fn)`) and runs on an avoid learner,
-which ignores `l`. See safety_sb3 API §5 for the proof, and `margins.py` for the
-in-code note.
+avoid-only task declares no `l` (`compose(g_fn)`) and declares `mode="safety"`,
+so the MAP resolves it to a `Safety*` learner, which ignores `l`. See safety_sb3
+API §5 for the proof, and `margins.py` for the in-code note.
 
 Available terms (see `margins.py` for the full list): `g_terrain_relative`,
 reach terms `l_rest` / `l_gap_foothold` / `l_launch_basin`, and per-robot terms
@@ -190,13 +218,14 @@ like converged training in the reward curve.
 
 One router, two peer families. `examples/train.py` dispatches to the on-policy or
 off-policy trainer by a **required `--family`** — neither is the "main" one; they
-are equal ways to solve the same 2×2, and both resolve the learner from
-*(task margins × `--adversary`)*:
+are the MAP's two wired-up **A** values, and both resolve the learner the same
+way — the task's `mode` × `--adversary`. Note the 2P cells differ structurally
+between the families (see §3):
 
-| `--family` | trainer | learners |
-|---|---|---|
-| `on_policy` (alias `ppo`) | `examples/train_on_policy.py` | SafetyPPO / ReachAvoidPPO / IsaacsPPO / GameplayPPO |
-| `off_policy` (alias `sac`) | `examples/train_off_policy.py` | SafetySAC / ReachAvoidSAC / IsaacsSAC / GameplaySAC |
+| `--family` | trainer | the MAP's **A** | learners |
+|---|---|---|---|
+| `on_policy` (alias `ppo`) | `examples/train_on_policy.py` | `PPO` | `{Safety,ReachAvoid}PPO{1P,2P}` |
+| `off_policy` (alias `sac`) | `examples/train_off_policy.py` | `SAC` | `{Safety,ReachAvoid}SAC{1P,2P}` |
 
 `train.py` forwards every other flag verbatim to the chosen trainer (run
 `--family <f> --help` to see its options). The two trainers are also directly
@@ -205,12 +234,12 @@ a `--config` YAML.
 
 ```bash
 # on-policy (PPO family)
-python examples/train.py --family on_policy  --task go2_gap_chain --terminal-type all    # reach-avoid PPO
-python examples/train.py --family ppo        --task digit_stabilize_avoid --adversary    # two-player avoid (IsaacsPPO)
+python examples/train.py --family on_policy  --task go2_gap_chain --terminal-type all    # ReachAvoidPPO1P
+python examples/train.py --family ppo        --task digit_stabilize_avoid --adversary    # SafetyPPO2P
 # off-policy (SAC family)
-python examples/train.py --family off_policy --task go2_stabilize                        # 1-player reach-avoid (ReachAvoidSAC)
-python examples/train.py --family sac        --task go2_stabilize --adversary --num-envs 1024  # 2-player reach-avoid (GameplaySAC)
-python examples/train.py --family sac        --task digit_stabilize_avoid --adversary    # two-player avoid (IsaacsSAC)
+python examples/train.py --family off_policy --task go2_stabilize                        # ReachAvoidSAC1P
+python examples/train.py --family sac        --task go2_stabilize --adversary --num-envs 1024  # ReachAvoidSAC2P
+python examples/train.py --family sac        --task digit_stabilize_avoid --adversary    # SafetySAC2P
 ```
 
 - `--terminal-type {all,g}` — forwarded to reach-avoid learners; ignored (with a
@@ -225,8 +254,8 @@ python examples/train.py --family sac        --task digit_stabilize_avoid --adve
   (re-run with `--config <that file>` to reproduce). Recipes live in `configs/`.
 
 ```bash
-python examples/train.py --config configs/go2_stabilize_gameplaysac.yaml            # the E042 recipe (family: off_policy)
-python examples/train.py --config configs/go2_stabilize_gameplaysac.yaml --seed 3   # override one knob
+python examples/train.py --config configs/go2_stabilize_reachavoidsac2p.yaml          # the E042 recipe (family: off_policy)
+python examples/train.py --config configs/go2_stabilize_reachavoidsac2p.yaml --seed 3 # override one knob
 ```
 - **Env/task overrides** — a config `env_overrides:` dict (or `--env-override KEY=VAL`,
   repeatable) forwards params to the task's `cfg_builder`, overriding values baked into

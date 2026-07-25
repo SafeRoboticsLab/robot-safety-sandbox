@@ -1,12 +1,31 @@
 # Robot Safety Sandbox
 
-Parallelized **mjlab** environments for nominal-policy training, safety-policy
-synthesis, and safety-filter evaluation — the environment layer for
+Parallelized **mjlab** environments for safety-policy synthesis, task-policy
+training, and safety-filter evaluation — the environment layer for
 [safety-stable-baselines](https://github.com/SafeRoboticsLab/safety-stable-baselines).
 
-Reach-avoid / avoid-only × single-agent / adversarial (ISAACS), on GPU end-to-end,
-plus a `filters/` library in which a safety filter is a composition of three
-swappable modules: fallback (pi^<) / monitor (Delta) / intervention (phi).
+Reach-avoid / avoid-only × single-player / zero-sum two-player, on GPU
+end-to-end, plus a `filters/` library in which a safety filter is a composition
+of three swappable modules: fallback (pi^<) / monitor (Delta) / intervention (phi).
+
+## The MAP
+
+> **Here's a MAP to navigate the codebase — Mode. Algorithm. Players.**
+
+    M = Mode       Safety | ReachAvoid | Cumulative    the Bellman operator
+    A = Algorithm  PPO | SAC | A2C | DQN               the RL update rule
+    P = Players    1P | 2P                             single-player | zero-sum
+
+Every learner is those three letters concatenated — `SafetyPPO1P`,
+`ReachAvoidSAC2P` — and each letter has exactly one source: **M** is the task's
+`TaskSpec(mode=...)`, **A** is `train.py --family`, **P** is `--adversary`.
+`algo_name(task_id, adversary, family)` is that concatenation and nothing else.
+
+Note `*PPO2P` and `*SAC2P` are different ALGORITHMS, not one game with two
+optimizers: `*SAC2P` is minimax on one shared joint-action critic
+`Q(s, [a_ctrl, a_dstb])`; `*PPO2P` is an alternating best-response approximation
+with two independent `V(s)` nets, two rollout buffers and a phase machine.
+See [the API guide](API.md).
 
 ## Start here
 
@@ -22,9 +41,10 @@ swappable modules: fallback (pi^<) / monitor (Delta) / intervention (phi).
 
 ```python
 from robot_safety_sandbox import make_tensor, list_tasks, algo_name
-from safety_sb3 import ReachAvoidPPO
+from safety_sb3 import ReachAvoidPPO1P
 
+algo_name("go2_gap_chain")                            # -> 'ReachAvoidPPO1P'
 env = make_tensor("go2_gap_chain", num_envs=2048)     # ~50k steps/s on 12 GB
-model = ReachAvoidPPO("MlpPolicy", env, normalize_obs=True, terminal_type="all")
+model = ReachAvoidPPO1P("MlpPolicy", env, normalize_obs=True, terminal_type="all")
 model.learn(2_000_000_000)
 ```

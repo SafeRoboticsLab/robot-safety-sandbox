@@ -18,16 +18,16 @@ with the algorithm layer, see the
     The new-user walkthrough: a diff-drive car reaches a goal while avoiding
     obstacles. One small robot, built from scratch, seven steps.
 
-    `ReachAvoidPPO`
+    `ReachAvoidPPO1P`
 
 -   ### [Go2 gap-jumping](go2-gap.md)
 
     ![go2 gap](assets/go2_gap_crossing.gif){ width="320" }
 
     A quadruped brakes or commits to a leap over a pit. The flagship
-    reach-avoid pipeline: `landing → crossing → chain → +ISAACS`.
+    reach-avoid pipeline: `landing → crossing → chain → + adversary`.
 
-    `SafetyPPO` · `ReachAvoidPPO` · `GameplayPPO`
+    `SafetyPPO1P` · `ReachAvoidPPO1P` · `ReachAvoidPPO2P`
 
 -   ### [Go2 crawl](go2-crawl.md)
 
@@ -36,18 +36,22 @@ with the algorithm layer, see the
     Duck under a low bar or stop — temporal commitment with a closing gate.
     Includes the avoid-vs-reach-avoid twins.
 
-    `SafetyPPO` · `ReachAvoidPPO` · `GameplayPPO`
+    `SafetyPPO1P` · `ReachAvoidPPO1P` · `ReachAvoidPPO2P`
 
 -   ### [Digit stabilize](digit.md)
 
     ![digit](assets/digit.png){ width="320" }
 
     A humanoid stays upright against a worst-case torso force. Two-player
-    **avoid** (ISAACS proper).
+    **avoid** — no target set at all.
 
-    `SafetyPPO` · `IsaacsPPO`
+    `SafetyPPO1P` · `SafetyPPO2P`
 
 </div>
+
+Learner names follow the MAP — **M**ode + **A**lgorithm + **P**layers (see the
+[API guide](../API.md#3-registry-api--and-the-map)). The names shown are the
+on-policy family; swap `PPO`→`SAC` for `--family off_policy`.
 
 Each page follows the same shape: what the task is, its `g`/`l` margin design,
 the learner (and the `--adversary` two-player variant), a run-it snippet, and the

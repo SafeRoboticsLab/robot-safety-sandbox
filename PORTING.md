@@ -81,8 +81,10 @@ most task-specific choice in the whole port:
   counts — note the failure mode: if the robot can always bail out safely,
   plain rest is satisfiable everywhere and "stop always" wins.
 - avoid-only — `compose(g_fn)`, NO l at all — when there is no liveness
-  requirement. Declare `default_algo="SafetyPPO"`; `--adversary` then gives
-  the two-player avoid game (`IsaacsPPO`). Do NOT pin l to a constant to make
+  requirement. Declare `mode="safety"`; the MAP then resolves it to
+  `SafetyPPO1P` (or `SafetySAC1P` under `--family off_policy`), and
+  `--adversary` gives the two-player avoid game `SafetyPPO2P` / `SafetySAC2P`.
+  Do NOT pin l to a constant to make
   a reach-avoid learner emulate avoid: it is provably not an instance of
   reach-avoid (l<0 empties the safe set, l>=0 strips the lookahead — see
   margins.py); `registry.algo_name` rejects that pairing.
@@ -92,18 +94,20 @@ most task-specific choice in the whole port:
 ```python
 register(TaskSpec(
   task_id="myrobot_mytask", cfg_builder=my_cfg, margin_fn=compose(g, l),
-  default_algo="ReachAvoidPPO", warmstart_from="myrobot_easier_stage",
-  supports_adversary=True, description="..."))
+  mode="reach-avoid", supports_adversary=True, description="..."))
 ```
-Import it in `robot_safety_sandbox/__init__.py`. `warmstart_from` documents the
-pipeline lineage — staged warm-starts are how hard skills actually form.
+Import it in `robot_safety_sandbox/__init__.py`. `mode` is the ONE learner-
+related field — `ReachAvoidPPO1P` here, `ReachAvoidPPO2P` with `--adversary`,
+`ReachAvoid*SAC*` under `--family off_policy`. Staged warm-starts are how hard
+skills actually form, but the lineage is a run-level `--load` choice recorded in
+`docs/log/experiments.md`, not a registry field.
 
 ## Step 4 — train
 
 ```bash
-python examples/train.py --task myrobot_mytask --steps 200000000 --seed 0
-# next stage:
-python examples/train.py --task myrobot_harder --steps 2000000000 --seed 0 \
+python examples/train.py --family on_policy --task myrobot_mytask --steps 200000000 --seed 0
+# next stage (this --load IS the warm-start lineage):
+python examples/train.py --family on_policy --task myrobot_harder --steps 2000000000 --seed 0 \
     --load runs/myrobot_mytask/final_model.zip
 ```
 
@@ -142,6 +146,6 @@ and `eval/video` (a clip from step 0, then every 25M steps).
 ## SAC / numpy path
 
 `make_numpy(task_id, ...)` exposes the same task as a classic SB3 VecEnv
-(`info["l_x"]`, `TimeLimit.truncated`) for `SafetySAC`/`ReachAvoidSAC`/
-`IsaacsSAC`/`GameplaySAC` and stock SB3 tooling. Prefer the tensor path for on-policy work
-(~3x faster).
+(`info["l_x"]`, `TimeLimit.truncated`) for the four SAC cells
+(`{Safety,ReachAvoid}SAC{1P,2P}`) and stock SB3 tooling. Prefer the tensor path
+for on-policy work (~3x faster).
