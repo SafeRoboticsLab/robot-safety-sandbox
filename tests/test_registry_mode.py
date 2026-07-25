@@ -1,9 +1,10 @@
-"""Unit tests for the registry's ``mode`` axis (the retired ``kind`` split).
+"""Unit tests for the registry's ``mode`` axis and the MAP name formula.
 
-A task's mode names the safety_sb3 BACKUP it is trained under, and drives four
-things: the learner ``algo_name()`` resolves, whether a ``margin_fn`` is
-required, whether the bridges build the env in dense-reward mode, and (legacy)
-what ``kind=`` maps onto.
+A task's mode names the safety_sb3 BACKUP it is trained under, and drives three
+things: the learner ``algo_name()`` resolves (the MAP's **M**), whether a
+``margin_fn`` is required, and whether the bridges build the env in dense-reward
+mode. It is the ONLY thing a registration says about the learner — the **A**
+comes from the trainer family and the **P** from ``--adversary``.
 """
 
 from __future__ import annotations
@@ -71,66 +72,73 @@ def test_registry_does_not_import_safety_sb3():
   assert "import safety_sb3" not in src
 
 
-# --- mode <-> default_algo ----------------------------------------------------
+# --- mode is REQUIRED and validated -------------------------------------------
 
-def test_default_mode_and_algo_are_todays_defaults(clean_registry):
-  s = registry.spec(_reg("t_default", margin_fn=_margins))
-  assert (s.mode, s.default_algo) == (AVOID, "SafetyPPO")
-
-
-@pytest.mark.parametrize("mode,algo", [
-  (AVOID, "SafetyPPO"), (REACH_AVOID, "ReachAvoidPPO"), (CUMULATIVE, "PPO")])
-def test_default_algo_derives_from_mode(clean_registry, mode, algo):
-  s = registry.spec(_reg(f"t_derive_{mode}", mode=mode,
-                         margin_fn=None if mode == CUMULATIVE else _margins))
-  assert s.default_algo == algo
+def test_mode_is_required(clean_registry):
+  with pytest.raises(ValueError, match="declares no mode"):
+    TaskSpec(task_id="t_nomode", cfg_builder=_cfg_builder, margin_fn=_margins)
 
 
-@pytest.mark.parametrize("algo,mode", [
-  ("SafetyPPO", AVOID), ("IsaacsPPO", AVOID), ("ReachAvoidPPO", REACH_AVOID),
-  ("GameplayPPO", REACH_AVOID), ("PPO", CUMULATIVE)])
-def test_explicit_default_algo_fixes_the_mode(clean_registry, algo, mode):
-  """Registrations that predate `mode=` name a learner; that still fixes it."""
-  s = registry.spec(_reg(f"t_algo_{algo}", default_algo=algo,
-                         margin_fn=None if mode == CUMULATIVE else _margins))
-  assert s.mode == mode
-
-
-def test_default_algo_contradicting_mode_is_refused(clean_registry):
-  with pytest.raises(ValueError, match="default_algo"):
-    TaskSpec(task_id="t_bad", cfg_builder=_cfg_builder, mode=AVOID,
-             default_algo="ReachAvoidPPO", margin_fn=_margins)
-
-
-def test_unknown_mode_and_algo_are_refused(clean_registry):
-  with pytest.raises(ValueError, match="mode"):
+def test_unknown_mode_is_refused(clean_registry):
+  # "nominal" was the retired kind= value; it is not a mode and buys nothing.
+  with pytest.raises(ValueError, match="must be one of"):
     TaskSpec(task_id="t_bad", cfg_builder=_cfg_builder, mode="nominal",
              margin_fn=_margins)
-  with pytest.raises(ValueError, match="not a known learner"):
-    TaskSpec(task_id="t_bad", cfg_builder=_cfg_builder, default_algo="A2C",
-             margin_fn=_margins)
 
 
-# --- mode dispatch (algo_name) ------------------------------------------------
+def test_spec_carries_no_learner_field(clean_registry):
+  """The learner is DERIVED. A registration must not be able to pin one, and
+  pipeline lineage lives in docs/log/experiments.md, not on the spec."""
+  s = registry.spec(_reg("t_fields", mode=AVOID, margin_fn=_margins))
+  assert not hasattr(s, "default_algo")
+  assert not hasattr(s, "warmstart_from")
+  with pytest.raises(TypeError):
+    TaskSpec(task_id="t_pin", cfg_builder=_cfg_builder, mode=AVOID,
+             margin_fn=_margins, default_algo="ReachAvoidPPO1P")
 
-@pytest.mark.parametrize("mode,solo,duo", [
-  (AVOID, "SafetyPPO", "IsaacsPPO"),
-  (REACH_AVOID, "ReachAvoidPPO", "GameplayPPO")])
-def test_algo_name_dispatches_mode_x_players(clean_registry, mode, solo, duo):
-  t = _reg(f"t_dispatch_{mode}", mode=mode, margin_fn=_margins,
+
+# --- the MAP: algo_name is Mode + Algorithm + Players --------------------------
+
+@pytest.mark.parametrize("family,alg", [("on_policy", "PPO"),
+                                        ("off_policy", "SAC")])
+@pytest.mark.parametrize("mode,prefix", [(AVOID, "Safety"),
+                                         (REACH_AVOID, "ReachAvoid")])
+def test_algo_name_is_mode_plus_algorithm_plus_players(
+    clean_registry, family, alg, mode, prefix):
+  t = _reg(f"t_map_{mode}_{family}", mode=mode, margin_fn=_margins,
            supports_adversary=True)
-  assert algo_name(t) == solo
-  assert algo_name(t, adversary=True) == duo
+  assert algo_name(t, family=family) == f"{prefix}{alg}1P"
+  assert algo_name(t, adversary=True, family=family) == f"{prefix}{alg}2P"
 
 
-def test_algo_name_cumulative_is_stock_ppo(clean_registry):
-  t = _reg("t_cum", mode=CUMULATIVE)
-  assert algo_name(t) == "PPO"
+def test_algo_name_defaults_to_the_on_policy_family(clean_registry):
+  t = _reg("t_family_default", mode=REACH_AVOID, margin_fn=_margins)
+  assert algo_name(t) == "ReachAvoidPPO1P"
+
+
+def test_algo_name_refuses_an_unknown_family(clean_registry):
+  t = _reg("t_family_bad", mode=AVOID, margin_fn=_margins)
+  with pytest.raises(ValueError, match="unknown family"):
+    algo_name(t, family="model_based")
+
+
+@pytest.mark.parametrize("family,alg", [("on_policy", "PPO"),
+                                        ("off_policy", "SAC")])
+def test_algo_name_cumulative_is_stock_sb3_with_no_player_suffix(
+    clean_registry, family, alg):
+  t = _reg(f"t_cum_{family}", mode=CUMULATIVE)
+  assert algo_name(t, family=family) == alg
 
 
 def test_algo_name_refuses_two_player_cumulative(clean_registry):
   t = _reg("t_cum_adv", mode=CUMULATIVE, supports_adversary=True)
   with pytest.raises(ValueError, match="two-player cumulative"):
+    algo_name(t, adversary=True)
+
+
+def test_algo_name_refuses_an_adversary_the_task_does_not_define(clean_registry):
+  t = _reg("t_no_adv", mode=AVOID, margin_fn=_margins)
+  with pytest.raises(ValueError, match="does not define an adversary"):
     algo_name(t, adversary=True)
 
 
@@ -186,46 +194,35 @@ def test_explicit_dense_reward_still_wins(clean_registry, monkeypatch):
   assert seen["dense_reward"] is True
 
 
-# --- deprecated kind= path ----------------------------------------------------
+# --- list_tasks ---------------------------------------------------------------
 
-@pytest.mark.parametrize("kind,mode", [("safety", AVOID),
-                                       ("nominal", CUMULATIVE)])
-def test_deprecated_kind_kwarg_maps_to_mode(clean_registry, kind, mode):
-  with pytest.warns(DeprecationWarning, match="kind"):
-    s = TaskSpec(task_id=f"t_kind_{kind}", cfg_builder=_cfg_builder, kind=kind,
-                 margin_fn=None if mode == CUMULATIVE else _margins)
-  assert s.mode == mode
-  assert s.default_algo == registry._MODE_ALGO[mode]
-
-
-def test_deprecated_kind_conflicting_with_mode_is_refused(clean_registry):
-  with pytest.raises(ValueError, match="deprecated kind"):
-    with pytest.warns(DeprecationWarning):
-      TaskSpec(task_id="t_kind_bad", cfg_builder=_cfg_builder, mode=AVOID,
-               kind="nominal")
-
-
-def test_deprecated_list_tasks_kind_kwarg(clean_registry):
+def test_list_tasks_filters_by_mode(clean_registry):
   registry._REGISTRY.clear()
   _reg("t_a", mode=AVOID, margin_fn=_margins)
   _reg("t_c", mode=CUMULATIVE)
   assert list_tasks() == ["t_a", "t_c"]
-  assert list_tasks(mode=CUMULATIVE) == ["t_c"]
-  with pytest.warns(DeprecationWarning, match="kind"):
-    assert list_tasks(kind="nominal") == ["t_c"]
-  with pytest.warns(DeprecationWarning, match="kind"):
-    assert list_tasks(kind="safety") == ["t_a"]
-  with pytest.warns(DeprecationWarning, match="nominal"):
-    assert list_tasks("nominal") == ["t_c"]     # retired value, positionally
+  assert list_tasks(CUMULATIVE) == ["t_c"]
+  assert list_tasks(mode=AVOID) == ["t_a"]
   with pytest.raises(ValueError, match="unknown mode"):
-    list_tasks("bogus")
+    list_tasks("nominal")            # the retired kind= value is not a mode
 
 
 # --- the shipped registry -----------------------------------------------------
 
+#: mode -> (1P, 2P) learner name, spelled out INDEPENDENTLY of registry._PREFIX
+#: so a typo in the formula can't agree with a typo in the test.
+_EXPECTED = {
+  AVOID: {"on_policy": ("SafetyPPO1P", "SafetyPPO2P"),
+          "off_policy": ("SafetySAC1P", "SafetySAC2P")},
+  REACH_AVOID: {"on_policy": ("ReachAvoidPPO1P", "ReachAvoidPPO2P"),
+                "off_policy": ("ReachAvoidSAC1P", "ReachAvoidSAC2P")},
+  CUMULATIVE: {"on_policy": ("PPO", None), "off_policy": ("SAC", None)},
+}
+
+
 def test_every_registered_task_resolves():
-  """Import the real package: every task has a valid mode, and its learner
-  resolves (or fails only for the documented avoid-only/reach-avoid clash)."""
+  """Import the real package: every task declares a valid mode and resolves to
+  the expected MAP name in BOTH families, at both player counts."""
   import robot_safety_sandbox  # noqa: F401  (registers every task)
 
   tasks = list_tasks()
@@ -234,6 +231,7 @@ def test_every_registered_task_resolves():
     s = registry.spec(t)
     assert s.mode in MODES, t
     assert (s.margin_fn is not None) == (s.mode != CUMULATIVE), t
-    assert algo_name(t) == registry._LEARNER[(s.mode, 1)], t
-    if s.supports_adversary and s.mode != CUMULATIVE:
-      assert algo_name(t, adversary=True) == registry._LEARNER[(s.mode, 2)], t
+    for family, (solo, duo) in _EXPECTED[s.mode].items():
+      assert algo_name(t, family=family) == solo, (t, family)
+      if s.supports_adversary and s.mode != CUMULATIVE:
+        assert algo_name(t, adversary=True, family=family) == duo, (t, family)

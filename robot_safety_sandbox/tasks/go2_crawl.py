@@ -18,7 +18,7 @@ import torch
 
 from ..envs.terrains.crawl_filter import BAR_DEPTH, _BAR_X
 from ..margins import CLAMP, g_terrain_relative, l_rest
-from ..registry import CUMULATIVE, TaskSpec, register
+from ..registry import CUMULATIVE, REACH_AVOID, TaskSpec, register
 
 _V_CMD = 1.0   # forward crawl target (m/s), world +x
 _V_TOL = 0.7   # tracking tolerance (l >= 0 within this of the command)
@@ -232,30 +232,29 @@ def register_all() -> None:
     unitree_go2_crawl_walk_video_env_cfg)
   register(TaskSpec(
     task_id="go2_crawl_duck", cfg_builder=unitree_go2_crawl_duck_env_cfg,
-    margin_fn=crawl_duck_margins, default_algo="ReachAvoidPPO",
+    margin_fn=crawl_duck_margins, mode=REACH_AVOID,
     description="Momentum approach at a low bar (forces a duck) + forward "
                 "velocity reach + FULL non-foot contact -> learn to duck AND "
                 "crawl forward (not retreat). Reach-avoid."))
   register(TaskSpec(
     task_id="go2_crawl_duck_video", cfg_builder=unitree_go2_crawl_duck_video_env_cfg,
-    margin_fn=crawl_duck_margins, default_algo="ReachAvoidPPO",
+    margin_fn=crawl_duck_margins, mode=REACH_AVOID,
     description="Packed-terrain herd render of go2_crawl_duck (eval video only)."))
   register(TaskSpec(
     task_id="go2_crawl_locomote", cfg_builder=unitree_go2_crawl_locomote_env_cfg,
-    margin_fn=crawl_locomote_margins, default_algo="ReachAvoidPPO",
+    margin_fn=crawl_locomote_margins, mode=REACH_AVOID,
     description="Phase 1: crouch-crawl LOCOMOTION under a descending bar "
                 "(velocity-tracking reach, momentum init, passable only)."))
   register(TaskSpec(
     task_id="go2_crawl", cfg_builder=unitree_go2_crawl_env_cfg,
-    margin_fn=crawl_margins,
-    default_algo="ReachAvoidPPO", warmstart_from="go2_crawl_locomote",
+    margin_fn=crawl_margins, mode=REACH_AVOID,
     description="Phase 2: decide crawl vs stop (rest + window), warm from P1."))
   register(TaskSpec(
     task_id="go2_crawl_isaacs", cfg_builder=unitree_go2_crawl_isaacs_env_cfg,
-    margin_fn=crawl_margins,
-    default_algo="GameplayPPO", warmstart_from="go2_crawl",
+    margin_fn=crawl_margins, mode=REACH_AVOID,
     supports_adversary=True,
-    description="Crawl + worst-case base-force adversary."))
+    description="Crawl + worst-case base-force adversary "
+                "(--adversary -> ReachAvoidPPO2P; warm from go2_crawl)."))
 
   # --- CUMULATIVE (plain-RL) crawl walker: the pi_task the crawl filter wraps.
   # The Stage-1 dense-reward walker of the two-stage crawl decomposition: crawl

@@ -1,12 +1,15 @@
 """Go2 gap-jumping benchmark family (parkour skill 1).
 
 Pipeline (each stage warm-starts the next; the jump is NOT learnable in one
-stage — it forms through the landing -> crossing reverse curriculum):
+stage — it forms through the landing -> crossing reverse curriculum). The
+learner column is what ``algo_name`` derives from the mode, on-policy family:
 
-  go2_gap_landing   avoid-only   SafetyPPO     mid-air spawn -> soft land
-  go2_gap_crossing  avoid-only   SafetyPPO     reverse curriculum launch->land
-  go2_gap_chain     reach-avoid  ReachAvoidPPO arrival momentum -> safe rest
-  go2_gap_chain (+adversary)     GameplayPPO   two-player reach-avoid game
+  go2_gap_landing   mode=safety       SafetyPPO1P      mid-air spawn -> soft land
+  go2_gap_crossing  mode=safety       SafetyPPO1P      reverse curriculum launch->land
+  go2_gap_chain     mode=reach-avoid  ReachAvoidPPO1P  arrival momentum -> safe rest
+  go2_gap_chain_isaacs (+--adversary) ReachAvoidPPO2P  two-player reach-avoid game
+
+The warm-start chain itself is recorded in docs/log/experiments.md, not here.
 
 The env cfgs are NATIVE to the zoo (envs/go2_gap/*, migrated phase-2).
 """
@@ -14,7 +17,7 @@ The env cfgs are NATIVE to the zoo (envs/go2_gap/*, migrated phase-2).
 from __future__ import annotations
 
 from ..margins import compose, g_terrain_relative, l_gap_foothold, l_rest
-from ..registry import TaskSpec, register
+from ..registry import AVOID, REACH_AVOID, TaskSpec, register
 
 
 def _cfgs():
@@ -34,20 +37,19 @@ def register_all() -> None:
   g = g_terrain_relative
   register(TaskSpec(
     task_id="go2_gap_landing", cfg_builder=cfgs["landing"],
-    margin_fn=compose(g), default_algo="SafetyPPO",
+    margin_fn=compose(g), mode=AVOID,
     description="Mid-air over a gap with clearing velocity; learn soft landing."))
   register(TaskSpec(
     task_id="go2_gap_crossing", cfg_builder=cfgs["crossing"],
-    margin_fn=compose(g), default_algo="SafetyPPO",
-    warmstart_from="go2_gap_landing",
+    margin_fn=compose(g), mode=AVOID,
     description="Reverse curriculum from the landed state back to the launch."))
   register(TaskSpec(
     task_id="go2_gap_chain", cfg_builder=cfgs["chain"],
-    margin_fn=compose(g, l_rest), default_algo="ReachAvoidPPO",
-    warmstart_from="go2_gap_crossing", supports_adversary=False,
+    margin_fn=compose(g, l_rest), mode=REACH_AVOID,
+    supports_adversary=False,
     description="Takeover momentum -> reach safe rest (brake / jump when needed)."))
   register(TaskSpec(
     task_id="go2_gap_chain_isaacs", cfg_builder=cfgs["chain_isaacs"],
-    margin_fn=compose(g, l_rest), default_algo="GameplayPPO",
-    warmstart_from="go2_gap_chain", supports_adversary=True,
+    margin_fn=compose(g, l_rest), mode=REACH_AVOID,
+    supports_adversary=True,
     description="Chain + worst-case base-force adversary (pinned curricula)."))

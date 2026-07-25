@@ -9,7 +9,7 @@ source repo on sys.path (see tasks/*.py + MIGRATION.md).
 
 from .base import MjlabNumpySafetyEnv, MjlabTensorSafetyEnv, build_task_cfg
 from .registry import (
-  AVOID, CUMULATIVE, MODES, REACH_AVOID, SAFETY_MODES,
+  AVOID, CUMULATIVE, FAMILIES, MODES, REACH_AVOID, SAFETY_MODES,
   TaskSpec, algo_name, list_tasks, make_numpy, make_tensor, register, spec)
 
 from .tasks import digit_safety as _digit_safety
@@ -41,5 +41,5 @@ __all__ = [
   "MjlabTensorSafetyEnv", "MjlabNumpySafetyEnv", "build_task_cfg",
   "TaskSpec", "register", "spec", "list_tasks", "make_tensor", "make_numpy",
   "algo_name",
-  "AVOID", "REACH_AVOID", "CUMULATIVE", "MODES", "SAFETY_MODES",
+  "AVOID", "REACH_AVOID", "CUMULATIVE", "MODES", "SAFETY_MODES", "FAMILIES",
 ]

@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import partial
 
 from ..margins import compose, g_terrain_relative
-from ..registry import TaskSpec, register
+from ..registry import AVOID, REACH_AVOID, TaskSpec, register
 
 
 def register_all() -> None:
@@ -16,23 +16,23 @@ def register_all() -> None:
     unitree_go2_brake_or_jump_env_cfg, l_stable_far)
   g = g_terrain_relative
 
-  def _pair(width, suffix, warm_avoid, warm_ra):
+  def _pair(width, suffix):
     cb = partial(unitree_go2_brake_or_jump_env_cfg, gap_width=width)
     register(TaskSpec(
       task_id=f"go2_gap_brake_or_jump_avoid{suffix}", cfg_builder=cb,
-      margin_fn=compose(g), default_algo="SafetyPPO",
-      warmstart_from=warm_avoid,
+      margin_fn=compose(g), mode=AVOID,
       description=f"brake-or-jump avoid-only @gap {width}: reverse curriculum over "
                   f"harvested jump states; no reach term (compose(g), no l)."))
     register(TaskSpec(
       task_id=f"go2_gap_brake_or_jump_ra{suffix}", cfg_builder=cb,
-      margin_fn=compose(g, l_stable_far), default_algo="ReachAvoidPPO",
-      warmstart_from=warm_ra,
+      margin_fn=compose(g, l_stable_far), mode=REACH_AVOID,
       description=f"brake-or-jump reach-avoid @gap {width}: RA target = stable far "
                   f"stance. Single-variable contrast vs _avoid."))
 
-  # Phase 1 (0.12) — existing IDs (no suffix), warm-start the crossing jumper.
-  _pair(0.12, "", "go2_gap_crossing", "go2_gap_crossing")
-  # Phase 2 — widen; each stage warm-starts the previous width's twin.
-  _pair(0.20, "_w20", "go2_gap_brake_or_jump_avoid", "go2_gap_brake_or_jump_ra")
-  _pair(0.30, "_w30", "go2_gap_brake_or_jump_avoid_w20", "go2_gap_brake_or_jump_ra_w20")
+  # Phase 1 (0.12) — existing IDs (no suffix); Phase 2 widens the gap. The
+  # warm-start lineage (0.12 twins from go2_gap_crossing, then each width from
+  # the previous width's SAME twin) is a run-level --load choice, recorded in
+  # docs/log/experiments.md.
+  _pair(0.12, "")
+  _pair(0.20, "_w20")
+  _pair(0.30, "_w30")
