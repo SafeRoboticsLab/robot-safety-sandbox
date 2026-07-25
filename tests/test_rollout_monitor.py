@@ -254,6 +254,107 @@ def test_rollout_composes_with_the_unmodified_least_restrictive_intervention():
   filt.reset(torch.tensor([False, True]))                 # reset contract holds
 
 
+# --- per-env IDENTITY: the domain-randomization draw ---------------------------
+# A shadow that copies STATE perfectly but redraws its own domain randomization
+# certifies a robot from the same distribution, not THE robot being filtered.
+# That gap once invalidated a whole horizon sweep (E051/E052 gameplay rows), so
+# it is pinned from both ends: the field list is derived, and an unknown
+# randomizer is an error rather than a silent skip.
+
+from types import SimpleNamespace  # noqa: E402
+
+from robot_safety_sandbox.filters import rollout as R  # noqa: E402
+
+
+def _fake_env(n, *, friction, bias, events, dr_fields=("geom_friction",)):
+  """The three attributes the identity copy touches, and nothing else."""
+  robot = SimpleNamespace(data=SimpleNamespace(encoder_bias=bias))
+  return SimpleNamespace(
+    num_envs=n,
+    cfg=SimpleNamespace(events=events),
+    event_manager=SimpleNamespace(domain_randomization_fields=dr_fields),
+    sim=SimpleNamespace(model=SimpleNamespace(geom_friction=friction)),
+    scene=SimpleNamespace(entities={"robot": robot}))
+
+
+def _dr_events():
+  friction_fn = lambda *a, **k: None                       # noqa: E731
+  friction_fn.model_fields = ("geom_friction",)
+  friction_fn.__name__ = "geom_friction"
+  bias_fn = lambda *a, **k: None                           # noqa: E731
+  bias_fn.__name__ = "encoder_bias"                        # no model_fields
+  return {"foot_friction": SimpleNamespace(func=friction_fn, mode="startup"),
+          "encoder_bias": SimpleNamespace(func=bias_fn, mode="startup")}
+
+
+def _pair(n_live=2, r=1):
+  """A live env and a shadow with DIFFERENT draws, as construction leaves them."""
+  n_sh = n_live * r
+  live = _fake_env(n_live, friction=torch.arange(n_live * 3).float().reshape(n_live, 3),
+                   bias=torch.arange(n_live * 4).float().reshape(n_live, 4) / 10,
+                   events=_dr_events())
+  shadow = _fake_env(n_sh, friction=torch.zeros(n_sh, 3),
+                     bias=torch.zeros(n_sh, 4), events=_dr_events())
+  m = torch.arange(n_live).repeat_interleave(r)
+  return live, shadow, m
+
+
+def test_dr_identity_fields_are_derived_from_the_event_manager():
+  live, _shadow, _m = _pair()
+  model_fields, entity_fields = R.dr_identity_fields(live)
+  assert model_fields == ("geom_friction",)
+  assert entity_fields == ("encoder_bias",), (
+    "a DR function with no model_fields writes where sim.model cannot be "
+    "asked; encoder_bias must come across from entity.data")
+
+
+def test_an_unrecognized_startup_randomizer_is_an_error_not_a_silent_skip():
+  """The failure mode this whole section exists to prevent: a new startup event
+  that hands each env a different robot, copied by nobody, noticed by no one."""
+  live, _shadow, _m = _pair()
+  mystery = lambda *a, **k: None                           # noqa: E731
+  mystery.__name__ = "randomize_something_new"
+  live.cfg.events["new"] = SimpleNamespace(func=mystery, mode="startup")
+  with pytest.raises(ValueError, match="model_fields"):
+    R.dr_identity_fields(live)
+  # ... with the explicit opt-out it is allowed through, and only then.
+  mystery._zoo_shadow_identity_safe = True
+  assert R.dr_identity_fields(live)[0] == ("geom_friction",)
+
+
+def test_sync_copies_the_realized_draw_and_never_resamples():
+  live, shadow, m = _pair(n_live=3)
+  assert R.dr_identity_diff(live, shadow, m, 3, 3)["geom_friction"] > 0
+  copied = R.sync_dr_identity(live, shadow, m, 3, 3)
+  assert set(copied) == {"geom_friction", "robot.encoder_bias"}
+  assert torch.equal(shadow.sim.model.geom_friction,
+                     live.sim.model.geom_friction)
+  assert torch.equal(shadow.scene.entities["robot"].data.encoder_bias,
+                     live.scene.entities["robot"].data.encoder_bias)
+  R.assert_dr_identity(live, shadow, m, 3, 3)
+
+
+def test_every_rollout_lane_of_one_live_env_gets_that_env_s_values():
+  """R > 1 must give all R lanes the SAME robot. R independent draws would be a
+  robust certificate over the DR distribution -- a different guarantee, and one
+  that must never appear by accident."""
+  live, shadow, m = _pair(n_live=2, r=3)
+  R.sync_dr_identity(live, shadow, m, 2, 6)
+  f = shadow.sim.model.geom_friction
+  for j in range(2):
+    lanes = f[j * 3:(j + 1) * 3]
+    assert torch.equal(lanes, lanes[:1].expand_as(lanes)), lanes
+    assert torch.equal(lanes[0], live.sim.model.geom_friction[j])
+
+
+def test_assert_dr_identity_fails_loudly_on_a_mismatch():
+  live, shadow, m = _pair()
+  R.sync_dr_identity(live, shadow, m, 2, 2)
+  shadow.scene.entities["robot"].data.encoder_bias[1, 2] += 1e-4
+  with pytest.raises(RuntimeError, match="not the same robot"):
+    R.assert_dr_identity(live, shadow, m, 2, 2)
+
+
 # --- the real mjlab shadow-sim path -------------------------------------------
 
 mjlab_env = pytest.mark.skipif(
@@ -446,6 +547,44 @@ def test_instantaneous_contact_history_switches_the_margin_source(go2_pair):
   g, _l = spec("go2_stabilize").margin_fn(S)
   assert torch.isfinite(g).all()
   del S._zoo_instantaneous_contact              # leave the fixture as found
+
+
+@mjlab_env
+def test_mjlab_seeding_makes_the_shadow_the_same_robot(go2_pair):
+  """On a real velocity env the shadow starts as a DIFFERENT robot -- foot
+  friction, base COM and encoder bias are drawn per env at construction -- and
+  seeding must make it the live one. Without this the rollout certifies a
+  sample from the DR distribution and the H = T guarantee is void."""
+  from robot_safety_sandbox import make_tensor
+  from robot_safety_sandbox.filters import MjlabShadowSim
+  live, _shadow, dev = go2_pair
+  fresh = make_tensor("go2_stabilize", num_envs=4, device=dev)   # R = 2
+  fresh.reset()
+  L, S = live.mj, fresh.mj
+  m = torch.arange(2, device=dev).repeat_interleave(2)
+
+  before = R.dr_identity_diff(L, S, m, 2, 4)
+  assert {"geom_friction", "body_ipos", "robot.encoder_bias"} <= set(before), (
+    f"fixture must exercise startup DR; got fields {sorted(before)}")
+  assert max(before.values()) > 1e-3, (
+    f"two independently built envs must start as different robots: {before}")
+
+  MjlabShadowSim(live, fresh, num_envs=2,
+                 rollouts_per_env=2).seed()          # asserts identity itself
+  after = R.dr_identity_diff(L, S, m, 2, 4)
+  assert all(v == 0.0 for v in after.values()), after
+  # ... and both lanes of one live env got the SAME robot, not two draws.
+  fr = S.sim.model.geom_friction[:]
+  assert torch.equal(fr[0], fr[1]) and torch.equal(fr[2], fr[3])
+  assert not torch.equal(fr[0], fr[2]), (
+    "the two LIVE envs must still differ, or this test proves nothing")
+
+  # ... and the same action then gives the same margin, exactly.
+  a = torch.zeros(2, 12, device=dev)
+  _o, g_l, _d, _t, _l = live.step_tensor(a)
+  _o, g_s, _d, _t, _l = fresh.step_tensor(a.repeat_interleave(2, dim=0))
+  assert (g_l.repeat_interleave(2) - g_s).abs().max() < 1e-5, (g_l, g_s)
+  fresh.close()
 
 
 @mjlab_env

@@ -195,8 +195,12 @@ def build_eval_env(task: str, num_envs: int, device: str = "cuda:0", *,
       hook an :class:`EvalPreset` uses for task-shaped surgery. Nothing in this
       module supplies one.
   :param play: build the cfg in play mode (evaluation default: no training-only
-      randomization). Note mjlab cfgs in this zoo keep observation NOISE on in
-      play mode, so consecutive evaluation runs are not bit-reproducible.
+      randomization). Consecutive evaluation runs are still not BITWISE
+      reproducible, but observation noise is not why: the go2 cfgs set
+      ``enable_corruption=False`` on the policy group in play mode (measured: a
+      shadow seeded from a live eval env reads max|diff| 0.0 on both obs
+      groups). What remains is mujoco_warp's own reduction nondeterminism,
+      ~2.5e-6 in qpos after one step.
   """
   s = spec(task)
   if adversary and not s.supports_adversary:

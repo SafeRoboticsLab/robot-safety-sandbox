@@ -38,23 +38,61 @@ Three details that cost real accuracy, all learned the hard way:
   routes through warp's own CUDA stream; ``.copy_()`` delegates to the wrapped
   tensor on the default stream.
 
-Measured fidelity (RTX 4070). On go2_stabilize -- the env with a 4-substep
-contact-force history AND seven observation-history buffers, i.e. the one this
-was said to be impossible for -- a seeded shadow matches the live env's
-``qpos``/``qvel`` to 1.2e-7, every observation-history buffer bitwise, and the
-task's ``g`` margin EXACTLY (dg = 0). On car_goal the shadow reproduces the live
-trajectory to 2.4e-7 m on the first step and then diverges only at the system's
-own Lyapunov rate (~1e-3 m by step 10 under random actions).
+Identity seeding -- copying the robot, not just its state
+---------------------------------------------------------
+State is only half of "be the live env". ``mode="startup"`` events give every
+env its OWN ROBOT once at construction -- on the velocity/parkour/digit stacks:
+``geom_friction`` (foot friction, 0.3-1.2), ``body_ipos`` (base COM, +-2.5/3 cm)
+and ``entity.data.encoder_bias`` (+-0.015 rad). Those live in ``sim.model`` and
+``entity.data``, which the buffer walk deliberately cannot reach, and a shadow
+built from the same cfg REDRAWS them. Unsynced, the rollout then certifies a
+robot from the same distribution rather than THE robot being filtered, which
+voids the H = T construction guarantee however exact the state copy is.
+:func:`sync_dr_identity` copies the REALIZED per-env values (live j -> every one
+of live j's R shadow lanes, identically -- R independent draws would be a
+robust certificate over the DR distribution, a different guarantee), and
+:func:`assert_dr_identity` re-checks them after every seed, because an identity
+gap corrupts verdicts invisibly. Two notes for anyone extending this:
 
-Two things do NOT come across, both by nature rather than by omission:
+* the field list is DERIVED, from ``EventManager.domain_randomization_fields``
+  (what ``@requires_model_fields`` had ``sim.expand_model_fields()`` allocate
+  per-world memory for). It includes the constants recomputed from a DR'd field
+  -- ``body_subtreemass``, ``dof_invweight0``, ``body_invweight0``, the tendon
+  pair -- so copying them all is exact and no ``recompute_constants`` is needed.
+  A startup event whose function declares no ``model_fields`` and is not in
+  :data:`_DR_ENTITY_FIELDS` RAISES rather than being skipped.
+* a model field that was never expanded per-world is a BROADCAST view (nworld
+  rows sharing one row of memory; ``TorchArray`` does the ``expand()``), and
+  writing to it raises "more than one element of the written-to tensor refers
+  to a single memory location". That is not an obstacle to route around: it
+  means the field holds no per-env value at all, so there is nothing to carry
+  and the two envs agree by construction. Only an ASYMMETRY -- live expanded,
+  shadow not -- is an error, and it is raised as one.
 
-* observation NOISE. go2_stabilize adds +-1.5 to ``joint_vel``, so the shadow's
-  observations differ from the live ones by up to a full noise width. That is a
-  fresh draw, not a state gap -- the MARGIN, a function of state, is identical.
-* bitwise step determinism. Two shadows seeded identically from the same live
-  env and given the same action land 4.5e-4 apart in ``g`` after one step; that
-  is mujoco_warp's own reduction nondeterminism and bounds how sharp any
-  rollout verdict can be.
+Measured fidelity (RTX 4070, go2_locomote, 64 envs, identical action sequences).
+After a seed, all six DR fields match EXACTLY (0.0) and the first step lands at
+1.2e-7 ``qpos`` / 2.8e-6 ``qvel`` with ``dg`` EXACTLY 0. WITHOUT the identity
+copy the same seed leaves ``geom_friction`` 7.7e-1, ``body_ipos`` 5.9e-2 and
+``encoder_bias`` 2.9e-2 apart, and one step costs 9.0e-3 qpos / 5.8e-1 qvel and
+1.6e-3 in ``g``. On go2_stabilize the seeded shadow also reproduces every
+observation-history buffer bitwise and the ``g`` margin exactly; on car_goal it
+tracks the live trajectory to 2.4e-7 m on the first step, then diverges at the
+system's own Lyapunov rate (~1e-3 m by step 10 under random actions).
+
+The remaining floor is mujoco_warp's reduction nondeterminism, and it is small:
+two shadows seeded identically from ONE live env and given the same action land
+2.5e-6 (qpos) / 4.3e-5 (qvel) / 2.1e-7 (g) apart after a step -- i.e. FURTHER
+apart than the seeded shadow is from the live env itself. (The earlier "4.5e-4
+in g from warp nondeterminism" figure is withdrawn: it compared two envs with
+independent DR draws, so it measured this bug, not the solver.)
+
+Observation noise is likewise not a caveat on the evaluation path: the zoo's
+eval envs are built ``play=True``, which sets ``enable_corruption=False`` on the
+``actor`` group (the nominal AND safety group here), and a seeded shadow's
+``actor``/``critic`` observations come out at max|diff| 0.0 against the live
+env's -- exactly, encoder bias included. A shadow built for TRAINING-mode cfgs
+(``play=False``) does draw its own noise; the MARGIN, a function of state, is
+unaffected either way.
 
 The contact-history wrinkle
 ---------------------------
@@ -224,21 +262,173 @@ def _copy_items(items, get, put, m, n_live, n_shadow, max_depth, _depth) -> None
 _SIM_FIELDS = ("qpos", "qvel", "act", "ctrl", "qacc_warmstart", "time",
                "xfrc_applied", "mocap_pos", "mocap_quat")
 
+# --- per-env IDENTITY: the domain-randomization draw --------------------------
+# Everything above copies the robot's STATE. A ``mode="startup"`` event gives
+# each env its own ROBOT -- foot friction, base COM offset, encoder bias -- drawn
+# once at construction and living in `sim.model` / `entity.data`, neither of
+# which the buffer walk above can reach (`scene` and `sim` are _NOT_TRAVERSED,
+# and rightly so). A shadow built from the same cfg redraws its own, so without
+# the copy below the rollout certifies a DIFFERENT ROBOT from the same
+# distribution -- which voids the H = T guarantee no matter how good the state
+# copy is. The values are copied REALIZED and per-env (live j -> every lane of
+# shadow j); nothing is ever re-sampled here.
+
+#: DR whose draw does NOT land in ``sim.model`` (so ``model_fields`` cannot find
+#: it), by event-function name -> the ``entity.data`` buffer it writes.
+_DR_ENTITY_FIELDS = {"encoder_bias": "encoder_bias"}
+
+
+def _native(x):
+  """The plain ``torch.Tensor`` behind an mjlab ``TorchArray`` proxy."""
+  return getattr(x, "_tensor", x)
+
+
+def dr_identity_fields(live) -> tuple[tuple[str, ...], tuple[str, ...]]:
+  """The (model, entity-data) buffers that hold ``live``'s per-env DR draw.
+
+  Derived from the env's own event manager rather than hard-coded, so a task
+  that randomizes a new field is covered without a change here:
+  ``EventManager.domain_randomization_fields`` is exactly the set
+  ``@requires_model_fields`` asked ``sim.expand_model_fields()`` to give real
+  per-world memory to (the DR'd fields AND the constants recomputed from them,
+  which is why seeding needs no ``recompute_constants``).
+
+  A DR function that declares no ``model_fields`` writes its draw somewhere this
+  cannot see; those are enumerated in :data:`_DR_ENTITY_FIELDS`, and an unknown
+  one RAISES rather than being silently skipped.
+  """
+  em = getattr(live, "event_manager", None)
+  model_fields = tuple(getattr(em, "domain_randomization_fields", ()) or ())
+  entity_fields: list[str] = []
+  events = getattr(getattr(live, "cfg", None), "events", None) or {}
+  for name, term in events.items():
+    fn = getattr(term, "func", None)
+    fname = getattr(fn, "__name__", type(fn).__name__)
+    if getattr(fn, "model_fields", None):
+      continue                                 # lands in sim.model; covered
+    if fname in _DR_ENTITY_FIELDS:
+      entity_fields.append(_DR_ENTITY_FIELDS[fname])
+    elif getattr(fn, "_zoo_shadow_identity_safe", False):
+      continue                                 # declared per-env-identity-free
+    elif getattr(term, "mode", None) == "startup":
+      raise ValueError(
+        f"startup event {name!r} (func {fname!r}) declares no model_fields, so "
+        "a shadow sim cannot tell whether it gave each env a different ROBOT. "
+        "If it is domain randomization, add its buffer to "
+        "filters.rollout._DR_ENTITY_FIELDS so seeding copies the realized "
+        "draw; if it randomizes nothing per-env, mark it explicitly with "
+        f"`{fname}._zoo_shadow_identity_safe = True`. Refusing to certify a "
+        "rollout whose robot may not be the live one.")
+  return model_fields, tuple(dict.fromkeys(entity_fields))
+
+
+def _dr_pairs(live, shadow, m: torch.Tensor, n_live: int, n_shadow: int):
+  """Yield ``(name, live_buffer, shadow_buffer)`` for every DR field to carry."""
+  model_fields, entity_fields = dr_identity_fields(live)
+  for f in model_fields:
+    a = getattr(live.sim.model, f, None)
+    b = getattr(shadow.sim.model, f, None)
+    if a is None or b is None:
+      continue
+    ta, tb = _native(a), _native(b)
+    if not ta.numel() or ta.shape[0] != n_live or tb.shape[0] != n_shadow:
+      continue
+    if ta.shape[1:] != tb.shape[1:]:
+      continue
+    if tb.stride(0) == 0:
+      # A model field that was never expanded per-world is a BROADCAST view --
+      # `nworld` rows sharing one row of memory (TorchArray does the expand()).
+      # Writing to it raises "more than one element ... refers to a single
+      # memory location", and no per-env value can be stored in it anyway.
+      if ta.stride(0) == 0:
+        continue        # neither side is per-world: identical by construction
+      raise RuntimeError(
+        f"live env randomizes model field {f!r} per env but the shadow's copy "
+        "is a broadcast view (never expanded per-world), so the realized draw "
+        "cannot be stored in it. Build the shadow from the SAME cfg (its DR "
+        "events are what call sim.expand_model_fields).")
+    yield f, a, b
+  for name, ent in shadow.scene.entities.items():
+    src = live.scene.entities.get(name)
+    if src is None:
+      continue
+    for attr in entity_fields:
+      a = getattr(src.data, attr, None)
+      b = getattr(ent.data, attr, None)
+      if a is None or b is None or not torch.is_tensor(a) or not a.numel():
+        continue
+      if (a.shape[0] == n_live and b.shape[0] == n_shadow
+          and a.shape[1:] == b.shape[1:]):
+        yield f"{name}.{attr}", a, b
+
+
+def sync_dr_identity(live, shadow, m: torch.Tensor, n_live: int,
+                     n_shadow: int) -> tuple[str, ...]:
+  """Copy live env ``m[j]``'s REALIZED DR values into shadow env ``j``.
+
+  Deterministic and re-indexed by the same ``env_map`` as the rest of the state
+  copy, so with ``rollouts_per_env = R > 1`` all R lanes of live env j get live
+  j's values IDENTICALLY. Deliberately not R independent draws: that would be a
+  robust certificate over the DR distribution, a different guarantee, and it
+  must never happen by accident.
+  """
+  copied = []
+  for name, a, b in _dr_pairs(live, shadow, m, n_live, n_shadow):
+    b[:] = _native(a)[m]                  # `[:] =`: warp's stream, not copy_()
+    copied.append(name)
+  return tuple(copied)
+
+
+def dr_identity_diff(live, shadow, m: torch.Tensor, n_live: int,
+                     n_shadow: int) -> dict[str, float]:
+  """``{field: max|live[m] - shadow|}`` over the DR fields (0.0 when matched)."""
+  return {name: float((_native(b) - _native(a)[m]).abs().max())
+          for name, a, b in _dr_pairs(live, shadow, m, n_live, n_shadow)}
+
+
+def assert_dr_identity(live, shadow, m: torch.Tensor, n_live: int,
+                       n_shadow: int) -> None:
+  """Fail loudly if the shadow is not the same ROBOT as the live env.
+
+  Cheap (a handful of tiny reductions) and run on every seed on purpose: a
+  silently unsynced identity is invisible in the verdicts -- it reads as a noisy
+  monitor -- and cost this project a whole invalidated experiment once.
+  """
+  bad = {k: v for k, v in dr_identity_diff(live, shadow, m, n_live,
+                                           n_shadow).items() if v != 0.0}
+  if bad:
+    raise RuntimeError(
+      "shadow sim is not the same robot as the live env after seeding: "
+      + ", ".join(f"{k} max|diff|={v:.3e}" for k, v in sorted(bad.items()))
+      + ". The rollout would certify a system drawn from the same domain-"
+        "randomization distribution rather than THE system being filtered.")
+
 #: managers whose own buffers and per-term buffers are per-env state
 _MANAGERS = ("action_manager", "observation_manager", "command_manager",
              "event_manager", "termination_manager", "curriculum_manager")
 
 
 def sync_env_state(live, shadow, env_map: torch.Tensor, *,
-                   contact_history: str = "sync") -> None:
+                   contact_history: str = "sync",
+                   verify_identity: bool = True) -> None:
   """Make ``shadow`` (an mjlab ``ManagerBasedRlEnv``) a copy of ``live``.
 
   ``env_map`` is (n_shadow,) long: shadow env j takes live env ``env_map[j]``.
   Positions are re-based onto the shadow's own tile origins, so the two envs
   need not have the same env count -- but they DO need the same terrain per
   tile, which is the caller's responsibility (see :class:`MjlabShadowSim`).
+
+  Copies both halves of "be the live env": its STATE (physics, manager and
+  sensor buffers) and its IDENTITY (the per-env domain-randomization draw, see
+  :func:`sync_dr_identity`). ``verify_identity`` re-reads the DR fields
+  afterwards and raises if any differ -- on by default, because an identity gap
+  is invisible in the verdicts it corrupts.
   """
   n_live, n_shadow, m = live.num_envs, shadow.num_envs, env_map
+
+  # 0. per-env IDENTITY (the startup-DR draw). Before the state copy, so the
+  #    forward() at the end runs on the live env's own robot.
+  sync_dr_identity(live, shadow, m, n_live, n_shadow)
 
   # 1. raw physics state, wholesale (see the module docstring on why not
   #    entity.data.joint_pos). These are mjlab TorchArray proxies, not
@@ -299,6 +489,9 @@ def sync_env_state(live, shadow, env_map: torch.Tensor, *,
 
   shadow.scene.write_data_to_sim()
   shadow.sim.forward()
+
+  if verify_identity:
+    assert_dr_identity(live, shadow, m, n_live, n_shadow)
 
 
 def _sync_sensors(live, shadow, m, n_live: int, n_shadow: int,
