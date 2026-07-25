@@ -33,9 +33,11 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.dirname(_HERE))
 
-from filter_fixtures import ACT_DIM, NUM_ENVS, STEPS, Fixture  # noqa: E402
+from filter_fixtures import (  # noqa: E402
+  ACT_DIM, NUM_ENVS, STEPS, Fixture, ToyShadowSim)
 from robot_safety_sandbox.filters import (  # noqa: E402
-  qcbf_filter, safety_critic_filter, safety_value_filter)
+  gameplay_filter, qcbf_filter, rollout_filter, safety_critic_filter,
+  safety_value_filter)
 
 DEV = "cpu"
 STRICT = dict(median_window=1, hysteresis=0.0, rest_speed=float("inf"),
@@ -43,15 +45,21 @@ STRICT = dict(median_window=1, hysteresis=0.0, rest_speed=float("inf"),
 
 
 def assert_valid(filt, fx: Fixture, ctx_keys=("s_obs",), steps: int = 60,
-                 tol: float = 0.0) -> int:
+                 tol: float = 0.0, on_step=None) -> int:
   """Check Def. 2 over ``steps`` of the fixture stream; return #states tested.
 
   For each step: where Delta(x, pi^<(x)) >= 0, require that the filtered action
   also satisfies Delta(x, phi(x, u)) >= -tol, for several nominal actions u
   (the recorded nominal, its negation, and the action-box corners).
+
+  ``on_step(t)`` runs before each step's checks — for monitors that read a
+  simulator rather than only the ctx (the rollout monitors), it is how the test
+  advances the shadow sim's LIVE state in lockstep with the fixture stream.
   """
   checked = 0
   for t in range(steps):
+    if on_step is not None:
+      on_step(t)
     ctx = {k: getattr(fx, {"s_obs": "obs"}[k])[t] for k in ctx_keys}
     a_fb = filt.fallback(**ctx)
     delta_fb = filt.monitor(a_fb, fallback=filt.fallback, **ctx)
@@ -85,6 +93,46 @@ def test_critic_filter_is_valid_in_strict_config():
   fx = Fixture()
   filt = safety_critic_filter(NUM_ENVS, DEV, fx.q_fn, fx.fallback_fn, **STRICT)
   assert assert_valid(filt, fx) > 0
+
+
+def _rollout_stream(fx: Fixture):
+  """A live-state holder driven by the fixture obs, plus the sim reading it.
+
+  The rollout monitors read a simulator, not the ctx, so validity is only
+  meaningful if the simulated state tracks the state the ctx describes. Here
+  the toy sim's live x IS the fixture's first obs channel.
+  """
+  holder = {"x": fx.obs[0][:, 0] * 0.3}
+  sim = ToyShadowSim(NUM_ENVS, lambda: holder["x"], dt=0.05)
+  return holder, sim, (lambda t: holder.update(x=fx.obs[t][:, 0] * 0.3))
+
+
+def test_rollout_filter_is_valid_in_strict_config():
+  """The gameplay composition, run through the SAME Def-2 harness as the value
+  and critic filters — the monitor is the only thing that changed."""
+  fx = Fixture()
+  holder, sim, on_step = _rollout_stream(fx)
+  filt = rollout_filter(NUM_ENVS, DEV, fx.fallback_fn, sim, 6, **STRICT)
+  assert assert_valid(filt, fx, steps=40, on_step=on_step) > 0
+
+
+def test_adversarial_rollout_filter_is_valid_in_strict_config():
+  fx = Fixture()
+  holder, sim, on_step = _rollout_stream(fx)
+
+  class _WithDstb(ToyShadowSim):
+    """ctrl and dstb both push; the sim reads their sum on channel 0."""
+
+    def step(self, action):
+      a = action.clone()
+      a[:, 0] = action[:, 0] + action[:, -1]
+      return super().step(a)
+
+  sim = _WithDstb(NUM_ENVS, lambda: holder["x"], dt=0.05)
+  filt = gameplay_filter(
+    NUM_ENVS, DEV, fx.fallback_fn, sim, 6,
+    lambda s_obs, **_: -0.3 * torch.ones(s_obs.shape[0], 1), **STRICT)
+  assert assert_valid(filt, fx, steps=40, on_step=on_step) > 0
 
 
 @pytest.mark.parametrize("kappa", [0.0, 0.5, 0.8, 1.0])

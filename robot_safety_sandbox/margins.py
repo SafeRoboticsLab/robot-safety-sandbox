@@ -70,8 +70,14 @@ def g_terrain_relative(env, scan_name="terrain_scan",
   terms = [height, tilt]
   try:
     sensor = env.scene[nonfoot_name]
-    force = (sensor.data.force_history
-             if sensor.data.force_history is not None else sensor.data.force)
+    hist = sensor.data.force_history
+    if getattr(env, "_zoo_instantaneous_contact", False):
+      # Rollout shadow sims that could not round-trip the contact-force history
+      # set this flag (filters/rollout.py, contact_history="instantaneous"): a
+      # half-filled window would silently under-report the peak force and hand
+      # back a bogus margin, so read the instantaneous force instead.
+      hist = None
+    force = hist if hist is not None else sensor.data.force
     if force is not None:
       mag = torch.norm(force, dim=-1)
       while mag.dim() > 1:

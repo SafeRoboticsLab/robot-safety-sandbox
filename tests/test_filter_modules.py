@@ -12,7 +12,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.dirname(_HERE))
 
-from filter_fixtures import ACT_DIM, NUM_ENVS, Fixture  # noqa: E402
+from filter_fixtures import (  # noqa: E402
+  ACT_DIM, NUM_ENVS, Fixture, ToyShadowSim)
 from robot_safety_sandbox.filters import (  # noqa: E402
   AdversarialRolloutMonitor, CriticMonitor, EngagementLog, FilterInfo,
   LeastRestrictiveIntervention, PolicyFallback, QCBFIntervention, RolloutMonitor,
@@ -60,16 +61,42 @@ def test_critic_monitor_uses_action_and_exposes_grad_fn():
   assert g.shape == u.shape and torch.isfinite(g).all()
 
 
+def _toy(num_envs=NUM_ENVS, rollouts_per_env=1):
+  return ToyShadowSim(num_envs, lambda: torch.full((num_envs,), 0.5),
+                      rollouts_per_env=rollouts_per_env)
+
+
 @pytest.mark.parametrize("cls", [RolloutMonitor, AdversarialRolloutMonitor])
-def test_rollout_monitors_are_gated_on_shadow_sim(cls):
-  with pytest.raises(NotImplementedError, match="shadow-simulation"):
-    cls(NUM_ENVS, DEV)
+def test_rollout_monitors_need_a_shadow_sim_of_the_right_size(cls):
+  """N * rollouts_per_env envs, no more and no less: the reshape to (N, R) that
+  takes the min over rollouts is silently wrong otherwise."""
+  extra = () if cls is RolloutMonitor else (lambda **_: None,)
+  with pytest.raises(ValueError, match="rollouts_per_env"):
+    cls(NUM_ENVS, DEV, _toy(NUM_ENVS + 1), 5, *extra)
 
 
-def test_gameplay_filter_builder_raises_on_the_monitor():
+@pytest.mark.parametrize("cls", [RolloutMonitor, AdversarialRolloutMonitor])
+def test_rollout_monitors_reject_a_zero_horizon(cls):
+  extra = () if cls is RolloutMonitor else (lambda **_: None,)
+  with pytest.raises(ValueError, match="horizon"):
+    cls(NUM_ENVS, DEV, _toy(), 0, *extra)
+
+
+def test_rollout_monitor_refuses_to_run_without_the_fallback():
+  """It has to SIMULATE pi^<, so unlike V/Q monitors it cannot ignore it."""
+  mon = RolloutMonitor(NUM_ENVS, DEV, _toy(), 4)
+  with pytest.raises(ValueError, match="fallback"):
+    mon(torch.zeros(NUM_ENVS, ACT_DIM))
+
+
+def test_gameplay_filter_builder_composes_the_standard_three():
   fx = Fixture()
-  with pytest.raises(NotImplementedError, match="shadow-simulation"):
-    gameplay_filter(NUM_ENVS, DEV, fx.fallback_fn, action_dim=ACT_DIM)
+  filt = gameplay_filter(NUM_ENVS, DEV, fx.fallback_fn, _toy(), 4,
+                         lambda **_: torch.zeros(NUM_ENVS, 1),
+                         action_dim=ACT_DIM)
+  assert isinstance(filt.monitor, AdversarialRolloutMonitor)
+  assert type(filt.intervention) is LeastRestrictiveIntervention
+  assert type(filt.fallback) is PolicyFallback
 
 
 # --- interventions -----------------------------------------------------------

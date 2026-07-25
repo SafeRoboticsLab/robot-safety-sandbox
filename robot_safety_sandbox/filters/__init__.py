@@ -20,9 +20,18 @@ The standard recipes are just triples, and the builders below assemble them:
                          — the switching filter on an off-policy Q.
   qcbf_filter            PolicyFallback + CriticMonitor + QCBFIntervention
                          — minimal modification under a class-K Q barrier.
+  rollout_filter         PolicyFallback + RolloutMonitor + LeastRestrictive
+                         — certify by simulating the fallback, not by trusting
+                         a learned scalar.
   gameplay_filter        PolicyFallback + AdversarialRolloutMonitor +
-                         LeastRestrictive — same intervention as the value
-                         filter; gated on the shadow-sim path (see monitor.py).
+                         LeastRestrictive — the same, with the rollout played
+                         against a learned adversary.
+
+Note what the last two do NOT change: the intervention. All four recipes share
+one ``LeastRestrictiveIntervention`` / ``QCBFIntervention``; going from a value
+monitor to a full adversarial rollout swaps exactly one of the three modules.
+That is the whole point of the decomposition, and it is load-bearing — if a new
+monitor ever needs the intervention edited, the interface is wrong.
 
 Margin convention throughout the zoo: safe iff >= 0 (g, l, V, Q alike).
 Everything is batched over N parallel envs, torch end-to-end, with per-step
@@ -39,6 +48,7 @@ from .intervention import (
 from .monitor import (
   AdversarialRolloutMonitor, CriticMonitor, Monitor, RolloutMonitor,
   ValueMonitor)
+from .rollout import MjlabShadowSim, RolloutStep, ShadowSim, sync_env_state
 from .telemetry import EngagementLog, FilterInfo
 
 __all__ = [
@@ -48,8 +58,9 @@ __all__ = [
   "AdversarialRolloutMonitor",
   "Intervention", "LeastRestrictiveIntervention", "OptIntervention",
   "QCBFIntervention",
+  "ShadowSim", "MjlabShadowSim", "RolloutStep", "sync_env_state",
   "safety_value_filter", "safety_critic_filter", "qcbf_filter",
-  "gameplay_filter",
+  "rollout_filter", "gameplay_filter",
 ]
 
 
@@ -103,19 +114,45 @@ def qcbf_filter(num_envs: int, device: str, q_fn, fallback_fn, *,
     telemetry=telemetry)
 
 
-def gameplay_filter(num_envs: int, device: str, fallback_fn, *,
-                    action_dim: int | None = None, telemetry=None,
-                    monitor_kwargs: dict | None = None,
-                    **switch) -> SafetyFilter:
-  """Gameplay Filter: least-restrictive switching on an adversarial rollout.
+def rollout_filter(num_envs: int, device: str, fallback_fn, shadow, horizon: int,
+                   *, reach_avoid: bool = False, recertify_every: int = 1,
+                   action_dim: int | None = None, telemetry=None,
+                   **switch) -> SafetyFilter:
+  """Rollout Filter: least-restrictive switching on a simulated H-step future.
 
-  Note it reuses the SAME intervention type as the value filter — only the
-  monitor changes. Construction currently raises: the adversarial rollout
-  monitor is gated on the shadow-simulation path (see monitor.py).
+  ``shadow`` is a ShadowSim (see rollout.py) with ``num_envs * R`` envs; the
+  verdict is the min over the R rollouts of each env.
   """
   return SafetyFilter(
     PolicyFallback(num_envs, device, fallback_fn, action_dim),
-    AdversarialRolloutMonitor(num_envs, device, **(monitor_kwargs or {})),
+    RolloutMonitor(num_envs, device, shadow, horizon, reach_avoid=reach_avoid,
+                   recertify_every=recertify_every, action_dim=action_dim),
+    LeastRestrictiveIntervention(num_envs, device, action_dim=action_dim,
+                                 **switch),
+    telemetry=telemetry)
+
+
+def gameplay_filter(num_envs: int, device: str, fallback_fn, shadow,
+                    horizon: int, adversary_fn, *, reach_avoid: bool = False,
+                    recertify_every: int = 1, action_dim: int | None = None,
+                    telemetry=None, **switch) -> SafetyFilter:
+  """Gameplay Filter: least-restrictive switching on an ADVERSARIAL rollout.
+
+  Identical to :func:`rollout_filter` but for the disturbance policy driving the
+  dstb sub-space of the shadow sim's action — which is what makes the certified
+  future a game rather than a nominal-dynamics guess. Note it reuses the SAME
+  intervention type (and the same fallback) as the value filter: only the
+  monitor changes.
+
+  ``shadow`` must have the concatenated ``[ctrl, dstb]`` action space
+  (``MjlabShadowSim.from_task(..., adversary=True)``).
+  """
+  return SafetyFilter(
+    PolicyFallback(num_envs, device, fallback_fn, action_dim),
+    AdversarialRolloutMonitor(num_envs, device, shadow, horizon, adversary_fn,
+                              reach_avoid=reach_avoid,
+                              recertify_every=recertify_every,
+                              action_dim=action_dim),
     LeastRestrictiveIntervention(num_envs, device, action_dim=action_dim,
                                  **switch),
     telemetry=telemetry)

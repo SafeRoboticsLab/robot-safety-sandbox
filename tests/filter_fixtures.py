@@ -7,11 +7,17 @@ critic and fallback actor.
 
 Used by ``characterize_filters.py`` (writes the pre-refactor snapshot) and by
 ``test_filter_equivalence.py`` (replays it through the composed filters).
+
+``Fixture``'s RNG draw order is FROZEN: ``tests/fixtures/filter_characterization
+.pt`` is a bitwise anchor against it. Add new fixtures below it, never inside
+it.
 """
 
 from __future__ import annotations
 
 import torch
+
+from robot_safety_sandbox.filters.rollout import RolloutStep, ShadowSim
 
 NUM_ENVS = 16
 ACT_DIM = 6
@@ -78,6 +84,61 @@ class Fixture:
   def q_fn(self, action, s_obs, **_):
     """Differentiable w.r.t. ``action`` (QCBF needs the gradient)."""
     return self.q_net(torch.cat([s_obs, action], dim=-1)).squeeze(-1)
+
+
+class ToyShadowSim(ShadowSim):
+  """A 1-D shadow sim for testing rollout-monitor SEMANTICS without a simulator.
+
+  A point on a line. The action's first component is a velocity command, the
+  safety margin IS the position (safe iff x >= 0, i.e. the failure set is the
+  negative half-line), the target set sits at x = 1, and falling below -0.5 ends
+  the episode. Everything a rollout monitor has to get right — horizon min,
+  min over parallel rollouts, post-termination masking, recertification latching
+  — is visible here in closed form.
+
+  :param state_fn: callable() -> (N,) the LIVE x. Called by every ``seed()``, so
+      a test can move the live state between control steps (and, crucially, NOT
+      move it, which is what makes seeding idempotent).
+  :param drift: (R,) per-rollout constant added to the commanded velocity — the
+      only reason R > 1 rollouts of a deterministic sim would differ. Stands in
+      for a sampled adversary / stochastic fallback.
+  """
+
+  def __init__(self, num_envs: int, state_fn, *, rollouts_per_env: int = 1,
+               dt: float = 0.1, drift: torch.Tensor | None = None,
+               device: str = "cpu"):
+    self.n_live = int(num_envs)
+    self.rollouts_per_env = int(rollouts_per_env)
+    self.num_envs = self.n_live * self.rollouts_per_env
+    self.device = device
+    self.state_fn, self.dt = state_fn, float(dt)
+    self.drift = None if drift is None else drift.to(device)
+    self.x = torch.zeros(self.num_envs, device=device)
+    self.seeds = 0                       # rollouts run (recertification count)
+    self.steps = 0
+
+  def seed(self) -> None:
+    self.x = self.state_fn().to(self.device).repeat_interleave(
+      self.rollouts_per_env).clone()
+    self.seeds += 1
+
+  def step(self, action: torch.Tensor) -> RolloutStep:
+    push = action[:, 0]
+    if self.drift is not None:
+      push = push + self.drift.repeat(self.n_live)
+    self.x = self.x + self.dt * push
+    self.steps += 1
+    g = self.x.clone()
+    l = 1.0 - (self.x - 1.0).abs()
+    obs = self.x.unsqueeze(-1).expand(self.num_envs, OBS_DIM).contiguous()
+    return RolloutStep(ctx={"s_obs": obs}, g=g, l=l, done=g < -0.5)
+
+
+def constant_fallback(value: float, act_dim: int = ACT_DIM):
+  """A scripted pi^<: always command ``value`` on every action dimension."""
+  def fn(s_obs, **_):
+    return torch.full((s_obs.shape[0], act_dim), value, device=s_obs.device)
+  return fn
 
 
 def drive(step_fn, fixture: Fixture, steps: int = STEPS) -> dict:
