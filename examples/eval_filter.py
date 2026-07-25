@@ -50,9 +50,7 @@ from mjlab.envs import ManagerBasedRlEnv  # noqa: E402
 from mjlab.managers.event_manager import EventTermCfg  # noqa: E402
 from mjlab.managers.scene_entity_config import SceneEntityCfg  # noqa: E402
 
-from safety_sb3 import ReachAvoidPPO1P, SafetyPPO1P  # noqa: E402
 from robot_safety_sandbox import spec  # noqa: E402
-from robot_safety_sandbox.filters import safety_value_filter  # noqa: E402
 
 CTRL_GAIN = 3.0        # bridge convention: policy action * gain -> env action
 # terrain geometry is task-dependent -> CLI args (--gap-x/--rest-x/--spawn-x):
@@ -159,11 +157,92 @@ def load_walker(zip_path: str, device: str):
   return model, vn
 
 
-def load_safety(zip_path: str, device: str):
+def _serialized_class_name(entry) -> str:
+  """Class NAME out of one SB3-serialized ``data`` entry (base64 cloudpickle)."""
+  if not isinstance(entry, dict) or ":serialized:" not in entry:
+    return ""
   try:
-    model = ReachAvoidPPO1P.load(zip_path, device=device)
+    import base64
+    import cloudpickle
+    obj = cloudpickle.loads(base64.b64decode(entry[":serialized:"]))
+    return getattr(obj, "__name__", "")
   except Exception:
-    model = SafetyPPO1P.load(zip_path, device=device)
+    return str(entry.get("__module__", ""))
+
+
+def _zip_data(zip_path: str) -> dict:
+  import zipfile
+  with zipfile.ZipFile(zip_path) as z:
+    return json.loads(z.read("data"))
+
+
+def twin_class_name(zip_path: str) -> str:
+  """Read the MAP cell (Mode + Algorithm + Players) out of the checkpoint.
+
+  The learner class is not stored by SB3, but each of the three letters leaves a
+  fingerprint that is, so the name is RECONSTRUCTED rather than guessed:
+
+    A  SAC saves ``actor.optimizer.pth`` (PPO saves ``policy.optimizer.pth``)
+    P  a two-player twin saves the disturbance actor's optimizer, and its data
+       carries ``ctrl_action_dim`` (where the joint action splits)
+    M  the buffer class: {ReachAvoid,Safety}{ReplayBuffer,RolloutBuffer}
+
+  Returns "" when nothing safety_sb3-shaped is found (e.g. a stock SB3 zip), so
+  the caller can fall back to trying candidates in order.
+  """
+  import zipfile
+  with zipfile.ZipFile(zip_path) as z:
+    names = set(z.namelist())
+  data = _zip_data(zip_path)
+  sac = any(n.startswith("actor.optimizer") for n in names)
+  alg = "SAC" if sac else "PPO"
+  two = ("ctrl_action_dim" in data
+         or any(n.startswith("dstb") for n in names))
+  buf = _serialized_class_name(
+    data.get("replay_buffer_class" if sac else "rollout_buffer_class"))
+  if not sac and not buf.startswith(("ReachAvoid", "Safety", "Tensor")):
+    return ""                        # stock stable_baselines3 checkpoint
+  mode = "ReachAvoid" if "ReachAvoid" in buf else "Safety"
+  return f"{mode}{alg}{'2P' if two else '1P'}"
+
+
+def load_safety(zip_path: str, device: str):
+  """Load a safety twin — any of the eight MAP cells — plus its obs normalizer.
+
+  Was PPO-1P only; the critic filters (Safety Critic, R-CBF) need a Q(s, a),
+  which only the off-policy twins have, and the gameplay filter needs a two-
+  player twin's disturbance actor. The class is resolved from the checkpoint
+  (:func:`twin_class_name`) with the old try-in-order chain kept as a fallback.
+  """
+  import safety_sb3
+  guess = twin_class_name(zip_path)
+  data = _zip_data(zip_path)
+  candidates = ([guess] if guess else []) + [
+    "ReachAvoidPPO1P", "SafetyPPO1P", "ReachAvoidSAC1P", "SafetySAC1P",
+    "ReachAvoidPPO2P", "SafetyPPO2P", "ReachAvoidSAC2P", "SafetySAC2P"]
+  # Two-player learners take the joint-action split as a CONSTRUCTOR argument
+  # (SB3 restores it into __dict__ too late for _setup_model), and the SAC
+  # learners' tensor path builds a device-resident replay buffer sized off
+  # self.env — which a checkpoint loaded for INFERENCE does not have. Override
+  # both: no env, no buffer, actors and critic only.
+  ctrl_dim = data.get("ctrl_action_dim")
+  model, errors = None, []
+  for name in dict.fromkeys(candidates):
+    cls = getattr(safety_sb3, name, None)
+    if cls is None:
+      continue
+    kw = {"ctrl_action_dim": int(ctrl_dim)} if (
+      "2P" in name and ctrl_dim is not None) else {}
+    custom = ({"_tensor_path": False, "buffer_size": 1} if "SAC" in name
+              else None)
+    try:
+      model = cls.load(zip_path, device=device, custom_objects=custom, **kw)
+      break
+    except Exception as e:                       # noqa: BLE001 - report them all
+      errors.append(f"{name}: {type(e).__name__}: {e}")
+  if model is None:
+    raise SystemExit(f"could not load safety twin {zip_path}:\n  "
+                     + "\n  ".join(errors))
   pt = zip_path.replace("final_model.zip", "tensornormalize.pt")
   if not os.path.exists(pt):
     d = os.path.dirname(zip_path)
@@ -179,12 +258,166 @@ def load_safety(zip_path: str, device: str):
   return model, norm
 
 
+def safety_modules(model, num_envs: int, device: str):
+  """Wire a loaded twin into the callables/modules the filter recipes take.
+
+  Every key is keyed off what the twin ACTUALLY has, so an on-policy twin
+  simply has no ``q_fn`` and a single-player one no ``dstb_fn`` — a caller that
+  needs one gets a KeyError naming the twin, not a silent wrong number.
+
+    fallback   PolicyFallback over pi^<        every twin
+    value_fn   V(s)                            *PPO* directly; *SAC* as
+                                               Q(s, pi^<(s)) — safe iff >= 0
+    q_fn       Q(s, a), DIFFERENTIABLE in a    *SAC* only (CriticMonitor,
+                                               QCBFIntervention)
+    dstb_fn    pi_dstb(s)                      *2P* only (AdversarialRollout-
+                                               Monitor's disturbance player)
+
+  All of them take the NORMALIZED observation as ``s_obs`` and tolerate extra
+  ctx kwargs, matching the ``**ctx`` convention in robot_safety_sandbox.filters.
+  The twin's own bounds are respected: actions are clamped to [-1, 1], and the
+  twin critic is reduced by MIN across the ensemble, which is the conservative
+  reading under the zoo's "safe iff >= 0" convention (and the same reduction
+  the SAC learners use to form their targets).
+  """
+  from robot_safety_sandbox.filters import PolicyFallback
+  policy = model.policy
+  policy.set_training_mode(False)
+  out = {}
+
+  if hasattr(policy, "predict_values"):                     # on-policy twin
+    def value_fn(s_obs, **_):
+      with torch.no_grad():
+        return policy.predict_values(s_obs).squeeze(-1)
+    out["value_fn"] = value_fn
+
+    def fallback_fn(s_obs, **_):
+      with torch.no_grad():
+        return torch.clamp(policy._predict(s_obs, deterministic=True), -1., 1.)
+  else:                                                     # off-policy twin
+    def fallback_fn(s_obs, **_):
+      with torch.no_grad():
+        return torch.clamp(policy.actor(s_obs, deterministic=True), -1., 1.)
+
+    dstb_actor = getattr(policy, "dstb_actor", None)
+
+    def _joint(action, s_obs):
+      """The critic's action argument. A 2P twin's critic is over the FULL
+      concatenated [ctrl, dstb] action (TwoPlayerSACPolicy), so the ctrl action
+      alone does not index it: append the disturbance the adversary would play.
+      pi_dstb depends on s only, so d(Q)/d(a_ctrl) is unaffected."""
+      if dstb_actor is None:
+        return action
+      return torch.cat([action, dstb_actor(s_obs, deterministic=True)], dim=-1)
+
+    def q_fn(action, s_obs, **_):
+      qs = policy.critic(s_obs, _joint(action, s_obs))
+      return torch.cat(qs, dim=1).min(dim=1).values
+    out["q_fn"] = q_fn
+
+    def value_fn(s_obs, **_):
+      with torch.no_grad():
+        return q_fn(action=fallback_fn(s_obs), s_obs=s_obs)
+    out["value_fn"] = value_fn
+
+    if dstb_actor is not None:
+      def dstb_fn(s_obs, **_):
+        with torch.no_grad():
+          return torch.clamp(dstb_actor(s_obs, deterministic=True), -1., 1.)
+      out["dstb_fn"] = dstb_fn
+
+  out["fallback_fn"] = fallback_fn
+  out["fallback"] = PolicyFallback(num_envs, device, fallback_fn)
+  out["twin"] = type(model).__name__
+  return out
+
+
 # --- filter ------------------------------------------------------------------
 # The latched eps-switch + caution band lives in the library now, as the
 # composition PolicyFallback + ValueMonitor + LeastRestrictiveIntervention
 # (robot_safety_sandbox.filters.safety_value_filter); this script wires the
 # twin's value head and fallback policy into it and keeps the walker-command
 # surgery (caution -> zero command) at the call site, where the env lives.
+
+#: --filter -> (recipe name, what the twin must supply). The five recipes differ
+#: in ONE module each; nothing below branches on the filter beyond this table.
+FILTERS = {
+  "value":    "V(s) from an on-policy twin, latched switch",
+  "critic":   "Q(s, u_nom) from a SAC twin, same latched switch",
+  "qcbf":     "Q(s, u) from a SAC twin, minimal modification (R-CBF)",
+  "rollout":  "simulate pi^< for H steps in a shadow env, latched switch",
+  "gameplay": "the same rollout, played against the twin's dstb actor",
+}
+
+
+def build_shadow(args, live_env, num_envs: int, adversary: bool, obs_adapter):
+  """A shadow sim over THIS run's env cfg (not the task's stock one).
+
+  The gauntlet env is surgically modified (pinned gap width, standing spawn,
+  grafted walker obs group — see build_filter_env_cfg), so the shadow has to be
+  built from the SAME cfg builder rather than via ``make_tensor(task)``, or the
+  rollout would certify a different world than the one being filtered.
+  """
+  from robot_safety_sandbox import MjlabTensorSafetyEnv, spec
+  from robot_safety_sandbox.filters import MjlabShadowSim
+  s = spec(args.task)
+
+  def cfg_builder(play: bool = False, **_):
+    return build_filter_env_cfg(args.task, num_envs, args.gap_width,
+                                args.n_gaps, args.episode_s, args.cmd_vx,
+                                spawn_x=tuple(args.spawn_x),
+                                island_length=args.island_length)
+
+  kw = dict(s.kwargs)
+  kw.setdefault("ctrl_gain", CTRL_GAIN)
+  bridge = MjlabTensorSafetyEnv(
+    num_envs, args.device, cfg_builder=cfg_builder, margin_fn=s.margin_fn,
+    ctrl_dim=s.ctrl_dim, dstb_dim=s.dstb_dim, adversary=adversary,
+    end_criterion=s.end_criterion, obs_key="proprioception", **kw)
+  return bridge, MjlabShadowSim(
+    live_env, bridge, num_envs=args.num_envs, rollouts_per_env=args.rollouts,
+    obs_adapter=obs_adapter, contact_history=args.contact_history)
+
+
+def build_filter(args, mods, device, live_env):
+  """Assemble the requested composition out of the twin's modules."""
+  from robot_safety_sandbox import filters as F
+  n = args.num_envs
+  switch = dict(eps=args.eps, caution=args.caution, hysteresis=args.hysteresis)
+
+  def need(key):
+    if key not in mods:
+      raise SystemExit(
+        f"--filter {args.filter} needs '{key}', which the twin at --safety "
+        f"({mods['twin']}) does not have. Q(s, a) comes from an off-policy "
+        "twin ({Safety,ReachAvoid}SAC{1P,2P}); a disturbance actor, from a 2P "
+        f"one. This twin supplies: {sorted(k for k in mods if k.endswith('_fn'))}.")
+    return mods[key]
+
+  if args.filter == "value":
+    return F.safety_value_filter(n, device, need("value_fn"),
+                                 mods["fallback_fn"], **switch), None
+  if args.filter == "critic":
+    return F.safety_critic_filter(n, device, need("q_fn"),
+                                  mods["fallback_fn"], **switch), None
+  if args.filter == "qcbf":
+    return F.qcbf_filter(n, device, need("q_fn"), mods["fallback_fn"],
+                         kappa=args.kappa), None
+  adversarial = args.filter == "gameplay"
+  bridge, shadow = build_shadow(
+    args, live_env, args.num_envs * args.rollouts, adversarial,
+    obs_adapter=lambda obs: {"s_obs": mods["norm"](obs.float())})
+  if adversarial:
+    filt = F.gameplay_filter(n, device, mods["fallback_fn"], shadow,
+                             args.horizon, need("dstb_fn"),
+                             reach_avoid=args.rollout_reach_avoid,
+                             recertify_every=args.recertify_every, **switch)
+  else:
+    filt = F.rollout_filter(n, device, mods["fallback_fn"], shadow,
+                            args.horizon,
+                            reach_avoid=args.rollout_reach_avoid,
+                            recertify_every=args.recertify_every, **switch)
+  return filt, (bridge, shadow)
 
 
 # --- main --------------------------------------------------------------------
@@ -222,6 +455,30 @@ def main():
                       "engaged, envs whose certificate margin l_vhat>0 latch "
                       "to the frozen skill until episode end (funnel filter "
                       "second stage). Requires $VHAT_PATH (vhat_cross.pt).")
+  p.add_argument("--filter", default="value", choices=sorted(FILTERS),
+                 help="which COMPOSITION to deploy; they differ in one module "
+                      "each: " + " | ".join(f"{k}: {v}"
+                                            for k, v in FILTERS.items()))
+  p.add_argument("--kappa", type=float, default=0.8,
+                 help="--filter qcbf: class-K coefficient, Q(x,u) >= kappa V(x)")
+  p.add_argument("--horizon", type=int, default=20,
+                 help="--filter rollout/gameplay: H sim steps per certification "
+                      "(1 nominal + H-1 fallback)")
+  p.add_argument("--rollouts", type=int, default=1,
+                 help="--filter rollout/gameplay: parallel rollouts per env; "
+                      "the verdict is their MIN (one failure condemns)")
+  p.add_argument("--recertify-every", type=int, default=1,
+                 help="--filter rollout/gameplay: re-certify every k steps and "
+                      "latch in between (amortizes the H sim steps)")
+  p.add_argument("--rollout-reach-avoid", action="store_true",
+                 help="--filter rollout/gameplay: score the rollout with the "
+                      "reach-avoid reduction max_t min(l, min_s<=t g) instead "
+                      "of avoid's min_t g")
+  p.add_argument("--contact-history", default="sync",
+                 choices=("sync", "instantaneous", "ignore"),
+                 help="--filter rollout/gameplay: how the shadow sim gets the "
+                      "contact-force history the margin reads "
+                      "(see filters/rollout.py)")
   p.add_argument("--device", default="cuda:0")
   p.add_argument("--out", default=None, help="write metrics JSON here")
   args = p.parse_args()
@@ -248,18 +505,10 @@ def main():
                p_star=p_star,
                latch=torch.zeros(args.num_envs, dtype=torch.bool, device=device))
     hyb_steps = 0
-  def _value_fn(s_obs):
-    with torch.no_grad():
-      return safety.policy.predict_values(s_obs).squeeze(-1)
-
-  def _fallback_fn(s_obs):
-    with torch.no_grad():
-      return torch.clamp(safety.policy._predict(s_obs, deterministic=True),
-                         -1.0, 1.0)
-
-  filt = safety_value_filter(args.num_envs, device, _value_fn, _fallback_fn,
-                             eps=args.eps, caution=args.caution,
-                             hysteresis=args.hysteresis)
+  mods = safety_modules(safety, args.num_envs, device)
+  mods["norm"] = snorm
+  filt, shadow_pair = build_filter(args, mods, device, env)
+  print(f"[filter] {args.filter}: {FILTERS[args.filter]}")
 
   robot = env.scene["robot"]
   origin_x = env.scene.env_origins[:, 0]
@@ -289,9 +538,14 @@ def main():
     s_obs = snorm(obs_dict["proprioception"].float())
     speed = torch.norm(robot.data.root_link_lin_vel_w[:, :2], dim=1)
     action, finfo = filt(a_walk, speed=speed, fresh=prev_done, s_obs=s_obs)
-    engaged, caution, v = finfo.engaged, finfo.caution, finfo.value
+    engaged, v = finfo.engaged, finfo.value
+    # QCBFIntervention modifies rather than switches, so it reports no caution
+    # band; the walker-command surgery below then simply never fires.
+    caution = (finfo.caution if finfo.caution is not None
+               else torch.zeros_like(engaged))
     if args.no_filter:
-      filt.intervention.engaged.zero_()
+      if hasattr(filt.intervention, "engaged"):
+        filt.intervention.engaged.zero_()
       filt.telemetry.reset()
       action = a_walk
       engaged = torch.zeros_like(engaged)
@@ -390,9 +644,13 @@ def main():
     caution_rate=filt.telemetry.caution_rate(args.steps),
     hybrid_rate=(hyb_steps / (n * args.steps)) if hyb is not None else 0.0,
     gap_width=args.gap_width, n_gaps=args.n_gaps, eps=args.eps,
+    composition=args.filter,
+    rollouts=(args.rollouts if args.filter in ("rollout", "gameplay") else 0),
     filter="off" if args.no_filter else (os.path.basename(
       os.path.dirname(args.safety)) + ("+funnel" if hyb is not None else "")),
   )
+  if shadow_pair is not None:
+    summary["certifications"] = shadow_pair[1].seeds
   print("\n=== FILTER GAUNTLET ===")
   for k, v in summary.items():
     print(f"  {k:22s} {v}")
@@ -400,6 +658,8 @@ def main():
     with open(args.out, "w") as f:
       json.dump(summary, f, indent=2)
     print(f"[saved] {args.out}")
+  if shadow_pair is not None:
+    shadow_pair[0].close()
 
 
 if __name__ == "__main__":
