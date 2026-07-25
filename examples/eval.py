@@ -128,9 +128,9 @@ def build_parser(pre_args):
                       "the verdict is their MIN (one failure condemns)")
   p.add_argument("--recertify-every", type=int, default=1,
                  help="--filter rollout/gameplay: re-certify every k steps")
-  p.add_argument("--rollout-reach-avoid", action="store_true",
-                 help="--filter rollout/gameplay: score with the reach-avoid "
-                      "reduction max_t min(l, min_s<=t g) instead of min_t g")
+  # NOTE: there is deliberately no --rollout-reach-avoid. Which reduction
+  # certifies the rollout is DERIVED from the task's mode (see
+  # eval/filters.py::reach_avoid_reduction); it is not the operator's to pick.
   p.add_argument("--contact-history", default="sync",
                  choices=("sync", "instantaneous", "ignore"))
   # --- the attack
@@ -209,7 +209,6 @@ def main():
                      hysteresis=args.hysteresis),
     rollout=RolloutCfg(horizon=args.horizon, rollouts=args.rollouts,
                        recertify_every=args.recertify_every,
-                       reach_avoid=args.rollout_reach_avoid,
                        contact_history=args.contact_history),
     kappa=args.kappa)
   print(f"[filter] {args.filter}: {FILTERS[args.filter]}"

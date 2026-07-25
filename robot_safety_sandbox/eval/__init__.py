@@ -27,7 +27,8 @@ this package is specific to any environment.
 from .envs import (
   EvalEnv, StepOut, TwistCommandSurgery, build_eval_env, detect_obs_key)
 from .filters import (
-  FILTERS, FilterBundle, RolloutCfg, SwitchCfg, build_filter, build_shadow)
+  FILTERS, FilterBundle, RolloutCfg, SwitchCfg, build_filter, build_shadow,
+  reach_avoid_reduction)
 from .metrics import (
   ActuatorJerk, Engagement, EpisodeOutcomes, InterventionMass, MarginStats,
   Metric, MetricSet, StepRecord, WallClock, protocol_metrics)
@@ -42,6 +43,7 @@ __all__ = [
   "EvalEnv", "StepOut", "TwistCommandSurgery", "build_eval_env",
   "detect_obs_key",
   "FILTERS", "FilterBundle", "SwitchCfg", "RolloutCfg", "build_filter",
+  "reach_avoid_reduction",
   "build_shadow",
   "Metric", "MetricSet", "StepRecord", "EpisodeOutcomes", "MarginStats",
   "ActuatorJerk", "InterventionMass", "WallClock", "Engagement",

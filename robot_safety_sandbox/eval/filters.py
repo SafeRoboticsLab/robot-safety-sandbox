@@ -23,7 +23,7 @@ from typing import Optional
 
 from .. import filters as F
 from ..base import MjlabTensorSafetyEnv
-from ..registry import spec
+from ..registry import REACH_AVOID, spec
 
 #: --filter -> one line on what it is and what the twin must supply.
 FILTERS = {
@@ -53,11 +53,23 @@ class SwitchCfg:
 
 @dataclass
 class RolloutCfg:
-  """The shadow-rollout monitors' knobs (rollout / gameplay only)."""
+  """The shadow-rollout monitors' knobs (rollout / gameplay only).
+
+  ``reach_avoid`` is NOT a free knob: which reduction certifies a rollout is a
+  property of the TASK, exactly as the MAP law derives the learner from it (a
+  ``mode="reach-avoid"`` task is valued by ``max_t min(l_t, min_{s<=t} g_s)``,
+  a ``mode="safety"`` one by ``min_t g_t``). Leave it ``None`` -- the default,
+  and the only setting an evaluation should use -- and :func:`build_filter`
+  derives it from ``spec(env.task).mode``. An explicit bool may only CONFIRM
+  what the mode derives (useful as an assertion); disagreeing with it is an
+  error, because certifying a reach-avoid task with the avoid reduction proves
+  "the fallback avoided failure for H steps" while never requiring the target
+  to be reached -- a strictly weaker claim wearing the reach-avoid name.
+  """
   horizon: int = 20
   rollouts: int = 1
   recertify_every: int = 1
-  reach_avoid: bool = False
+  reach_avoid: Optional[bool] = None
   contact_history: str = "sync"
 
 
@@ -82,6 +94,38 @@ def _need(mods: dict, key: str, kind: str):
       "({Safety,ReachAvoid}SAC{1P,2P}); a disturbance actor, from a 2P one. "
       f"This twin supplies: {sorted(k for k in mods if k.endswith('_fn'))}.")
   return mods[key]
+
+
+def reach_avoid_reduction(task: str, override: Optional[bool] = None) -> bool:
+  """Which rollout reduction certifies ``task`` -- derived from its mode.
+
+  The same law that names the learner (``registry.algo_name``) fixes the
+  reduction: the mode IS the outcome functional the task's margins define, and
+  a shadow rollout is that functional's Monte-Carlo evaluation under
+  (pi^<, pi_d). So there is nothing left to choose.
+
+  :param override: normally ``None``. A bool is accepted only to ASSERT the
+      derived value; disagreement raises, it never wins.
+  """
+  s = spec(task)
+  derived = s.mode == REACH_AVOID
+  if derived and not getattr(s.margin_fn, "has_target", True):
+    raise SystemExit(
+      f"task '{task}' declares mode={REACH_AVOID!r} but its margin_fn has no "
+      "target channel (l is a zero placeholder), so the reach-avoid reduction "
+      "max_t min(l, min_s<=t g) is degenerate. Fix the task's margins or "
+      f"declare mode='safety'.")
+  if override is not None and bool(override) != derived:
+    want = "reach-avoid" if derived else "avoid"
+    got = "reach-avoid" if override else "avoid"
+    raise SystemExit(
+      f"reach_avoid={override} contradicts task '{task}' (mode={s.mode!r}, "
+      f"which requires the {want} reduction, not the {got} one). The rollout "
+      "reduction is DERIVED from the task's mode, not chosen: certifying a "
+      "reach-avoid task with min_t g would only prove the fallback avoided "
+      "failure over the horizon, never that it reached the target. Drop the "
+      "override (leave it None) to get the right one.")
+  return derived
 
 
 def build_shadow(env, mods: dict, rollout: RolloutCfg, *,
@@ -146,7 +190,12 @@ def build_filter(kind: str, mods: dict, env, *, switch: SwitchCfg | None = None,
   bridge = None
   if shadow is None:
     bridge, shadow = build_shadow(env, mods, rollout, adversary=adversarial)
-  common = dict(reach_avoid=rollout.reach_avoid,
+  reach_avoid = reach_avoid_reduction(env.task, rollout.reach_avoid)
+  print(f"[filter] {kind}: reduction = "
+        + ("reach-avoid  max_t min(l_t, min_s<=t g_s)" if reach_avoid
+           else "avoid  min_t g_t")
+        + f"  (derived from mode={spec(env.task).mode!r})")
+  common = dict(reach_avoid=reach_avoid,
                 recertify_every=rollout.recertify_every, **switch.kwargs())
   if adversarial:
     filt = F.gameplay_filter(n, device, mods["fallback_fn"], shadow,

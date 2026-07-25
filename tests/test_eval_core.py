@@ -23,6 +23,7 @@ from filter_fixtures import ACT_DIM, NUM_ENVS, Fixture, ToyShadowSim  # noqa: E4
 from robot_safety_sandbox.eval import (  # noqa: E402
   FILTERS, ActuatorJerk, Engagement, EpisodeOutcomes, InterventionMass,
   MarginStats, MetricSet, RolloutCfg, StepRecord, SwitchCfg, WallClock,
+  reach_avoid_reduction,
   build_filter, detect_obs_key, list_presets, preset, protocol_metrics)
 from robot_safety_sandbox.eval.envs import (  # noqa: E402
   NOMINAL_OBS_ORDER, SAFETY_OBS_ORDER, StepOut, TwistCommandSurgery)
@@ -57,8 +58,10 @@ def test_obs_key_detection_falls_back_to_the_first_group():
 # --- filter construction, all five kinds -------------------------------------
 
 class _FakeEnv:
-  """The two attributes build_filter reads for the non-rollout compositions."""
+  """What build_filter reads: the batch, and the task whose mode fixes the
+  rollout reduction (go2_locomote is mode='reach-avoid')."""
   num_envs, device = NUM_ENVS, DEV
+  task = "go2_locomote"
 
 
 def _mods(fx: Fixture, *, q: bool = False, dstb: bool = False) -> dict:
@@ -93,6 +96,38 @@ def test_build_filter_names_the_capability_the_twin_lacks(kind, missing):
   fx = Fixture(DEV)
   with pytest.raises(SystemExit, match=missing):
     build_filter(kind, _mods(fx), _FakeEnv(), rollout=RolloutCfg(horizon=2),
+                 shadow=ToyShadowSim(NUM_ENVS, lambda: torch.zeros(NUM_ENVS),
+                                     device=DEV))
+
+
+@pytest.mark.parametrize("kind", ["rollout", "gameplay"])
+def test_rollout_reduction_is_derived_from_the_task_mode(kind):
+  """The E051 defect: a mode='reach-avoid' task certified with min_t g.
+
+  The reduction must follow the task's mode, so a reach-avoid task gets
+  max_t min(l, min_s<=t g) without anyone asking for it.
+  """
+  fx = Fixture(DEV)
+  bundle = build_filter(kind, _mods(fx, q=True, dstb=True), _FakeEnv(),
+                        rollout=RolloutCfg(horizon=3),
+                        shadow=ToyShadowSim(NUM_ENVS,
+                                            lambda: torch.zeros(NUM_ENVS),
+                                            device=DEV))
+  assert bundle.filt.monitor.reach_avoid is True
+
+
+def test_reach_avoid_reduction_derives_both_modes():
+  assert reach_avoid_reduction("go2_locomote") is True       # mode=reach-avoid
+  assert reach_avoid_reduction("go2_locomote", True) is True  # may only confirm
+
+
+@pytest.mark.parametrize("kind", ["rollout", "gameplay"])
+def test_avoid_reduction_on_a_reach_avoid_task_is_an_error(kind):
+  """Not a warning: it silently downgrades what the certificate proves."""
+  fx = Fixture(DEV)
+  with pytest.raises(SystemExit, match="contradicts task"):
+    build_filter(kind, _mods(fx, q=True, dstb=True), _FakeEnv(),
+                 rollout=RolloutCfg(horizon=3, reach_avoid=False),
                  shadow=ToyShadowSim(NUM_ENVS, lambda: torch.zeros(NUM_ENVS),
                                      device=DEV))
 
