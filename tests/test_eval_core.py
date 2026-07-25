@@ -9,6 +9,7 @@ the preset registry. The tests that need a real mjlab env live in
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 
@@ -21,8 +22,9 @@ sys.path.insert(0, os.path.dirname(_HERE))
 
 from filter_fixtures import ACT_DIM, NUM_ENVS, Fixture, ToyShadowSim  # noqa: E402
 from robot_safety_sandbox.eval import (  # noqa: E402
-  FILTERS, ActuatorJerk, Engagement, EpisodeOutcomes, InterventionMass,
-  MarginStats, MetricSet, RolloutCfg, StepRecord, SwitchCfg, WallClock,
+  FILTERS, ActuatorJerk, DistanceTravelled, Engagement, EpisodeOutcomes,
+  InterventionMass, MarginStats, MetricSet, RolloutCfg, StepRecord, SwitchCfg,
+  TrajectoryRecorder, WallClock,
   reach_avoid_reduction,
   build_filter, detect_obs_key, list_presets, preset, protocol_metrics)
 from robot_safety_sandbox.eval.envs import (  # noqa: E402
@@ -144,7 +146,7 @@ def test_the_five_kinds_are_exactly_the_documented_table():
 # --- metrics on synthetic trajectories with known answers --------------------
 
 def _rec(t, *, g, l, term=None, trunc=None, a_nom=None, a_filt=None,
-         engaged=None, env=None, filter_s=0.0, env_s=0.0):
+         a_dstb=None, engaged=None, env=None, filter_s=0.0, env_s=0.0):
   n = g.shape[0]
   z = torch.zeros(n, dtype=torch.bool)
   info = type("I", (), {"engaged": z if engaged is None else engaged,
@@ -154,6 +156,7 @@ def _rec(t, *, g, l, term=None, trunc=None, a_nom=None, a_filt=None,
   return StepRecord(t=t, env=env, a_nom=torch.zeros(n, 2) if a_nom is None
                     else a_nom,
                     a_filt=torch.zeros(n, 2) if a_filt is None else a_filt,
+                    a_dstb=a_dstb,
                     info=info, out=out, filter_s=filter_s, env_s=env_s)
 
 
@@ -280,6 +283,242 @@ def test_actuator_jerk_skips_the_step_after_a_reset():
   env.i = 2
   m.update(_rec(2, g=torch.ones(1), l=torch.ones(1), env=env))  # counted, 0
   assert m.result()["jerk_mean"] == pytest.approx(0.0)
+
+
+# --- distance + trajectory recording -----------------------------------------
+
+class _TrajEnv:
+  """An env whose robot state follows a scripted sequence of root positions.
+
+  Mirrors the measured mjlab behaviour: the position read at a DONE step is
+  already the next episode's spawn (the auto-reset happens inside step).
+  """
+
+  def __init__(self, positions, n=1, ctrl=2, joints=3, dstb=3, yaw=0.0):
+    self.positions, self.i = positions, 0
+    self.num_envs, self.ctrl_dim, self.dstb_dim = n, ctrl, dstb
+    self.device = DEV
+    self._data = type("D", (), {})()
+    self._robot = type("R", (), {})()
+    self._robot.data = self._data
+    self._j = joints
+    # mujoco order (w, x, y, z); a pure yaw about z
+    self._q = torch.tensor([[math.cos(yaw / 2), 0.0, 0.0,
+                             math.sin(yaw / 2)]])
+
+  @property
+  def robot(self):
+    p = self.positions[self.i]
+    n, j = self.num_envs, self._j
+    self._data.root_link_pos_w = p
+    self._data.root_link_quat_w = self._q.expand(n, 4).contiguous()
+    self._data.root_link_lin_vel_w = torch.zeros(n, 3) + float(self.i)
+    self._data.root_link_ang_vel_w = torch.zeros(n, 3)
+    self._data.joint_pos = torch.zeros(n, j) + float(self.i)
+    self._data.joint_vel = torch.zeros(n, j)
+    self._data.joint_acc = torch.zeros(n, j)
+    return self._robot
+
+
+#: one env: walks +1 m in x, resets (teleport to 100, 100), walks +1 m twice.
+_TRAJ_XY = [torch.tensor([[1.0, 0.0, 0.3]]), torch.tensor([[2.0, 0.0, 0.3]]),
+            torch.tensor([[100.0, 100.0, 0.3]]),
+            torch.tensor([[101.0, 100.0, 0.3]]),
+            torch.tensor([[102.0, 100.0, 0.3]])]
+_TRAJ_DONE = [False, False, True, False, False]
+
+
+def _drive(metric, env, *, g=None):
+  """Play the scripted stream through a metric, the way run_eval would."""
+  for t, dn in enumerate(_TRAJ_DONE):
+    env.i = t
+    gv = torch.tensor([1.0]) if g is None else g[t]
+    metric.update(_rec(t, g=gv, l=-torch.ones(1), env=env,
+                       trunc=torch.tensor([dn]),
+                       a_nom=torch.full((1, env.ctrl_dim), 0.1 * t),
+                       a_filt=torch.full((1, env.ctrl_dim), 0.2 * t),
+                       a_dstb=torch.full((1, env.dstb_dim), 0.3 * t)))
+  return metric.result()
+
+
+def test_distance_travelled_drops_the_reset_teleport():
+  """Episode 1 walks 1 m; the 140 m teleport into the new spawn is not travel."""
+  env = _TrajEnv(_TRAJ_XY)
+  r = _drive(DistanceTravelled(1, DEV), env)
+  assert r["dist_episodes"] == 1
+  assert r["dist_path_mean"] == pytest.approx(1.0)
+  assert r["dist_net_mean"] == pytest.approx(1.0)
+  assert r["dist_censored"] == 1          # the second episode never finished
+
+
+def test_distance_separates_path_length_from_net_displacement():
+  """A robot that trots in place covers path but goes nowhere."""
+  there_and_back = [torch.tensor([[1.0, 0.0, 0.3]]),
+                    torch.tensor([[2.0, 0.0, 0.3]]),
+                    torch.tensor([[1.0, 0.0, 0.3]]),
+                    torch.tensor([[9.0, 9.0, 0.3]]),
+                    torch.tensor([[9.0, 9.0, 0.3]])]
+  env = _TrajEnv(there_and_back)
+  m = DistanceTravelled(1, DEV)
+  for t, dn in enumerate([False, False, False, True, False]):
+    env.i = t
+    m.update(_rec(t, g=torch.ones(1), l=-torch.ones(1), env=env,
+                  trunc=torch.tensor([dn])))
+  r = m.result()
+  # travelled 1 out, 1 back = 2; net displacement from the (1,0) start = 0
+  assert r["dist_path_mean"] == pytest.approx(2.0)
+  assert r["dist_net_mean"] == pytest.approx(0.0)
+
+
+def _record(tmp_path, *, traj_envs=1, g=None, env=None, frame="spawn"):
+  env = env or _TrajEnv(_TRAJ_XY)
+  rec = TrajectoryRecorder(env, str(tmp_path), traj_envs=traj_envs, frame=frame)
+  return rec, _drive(rec, env, g=g)
+
+
+def _pkl_trajs(tmp_path):
+  import pickle
+  with open(tmp_path / "trajectories.pkl", "rb") as f:
+    return pickle.load(f)["trajectories"]
+
+
+def test_trajectory_recorder_does_not_concatenate_across_an_episode_boundary(
+    tmp_path):
+  """THE bug this recorder has to not have: mjlab auto-resets inside step, so a
+  naive buffer splices the old episode onto the new spawn."""
+  _rec_m, summary = _record(tmp_path, frame="world")
+  assert summary["traj_episodes"] == 2
+  trajs = _pkl_trajs(tmp_path)
+  assert len(trajs) == 2
+  # episode 1 is the pre-reset walk only; the spawn at (100, 100) is NOT in it
+  assert trajs[0][:, 0:2].tolist() == [[1.0, 0.0], [2.0, 0.0]]
+  # episode 2 STARTS at the fresh spawn -- the state read on the done step
+  assert trajs[1][:, 0:2].tolist() == [[100.0, 100.0], [101.0, 100.0]]
+  assert all(t.shape[1] == 3 for t in trajs)      # x, y, z
+
+
+def test_trajectory_recorder_spawn_frame_puts_every_episode_at_the_origin(
+    tmp_path):
+  """The coverage plot draws its star at (0, 0) and overlays experiments, but
+  mjlab spreads envs over the terrain grid -- so the default frame is each
+  episode's own spawn."""
+  _record(tmp_path)                                  # frame="spawn" default
+  trajs = _pkl_trajs(tmp_path)
+  assert trajs[0][:, 0:2].tolist() == [[0.0, 0.0], [1.0, 0.0]]
+  assert trajs[1][:, 0:2].tolist() == [[0.0, 0.0], [1.0, 0.0]]
+  # z is left in world units -- height above the floor means what it says
+  assert trajs[0][:, 2].tolist() == pytest.approx([0.3, 0.3])
+
+
+def test_trajectory_recorder_spawn_frame_rotates_heading_onto_plus_x(tmp_path):
+  """Spawn yaw is uniformly random on go2_locomote (measured std 92 deg); the
+  fan only concentrates if the initial heading is rotated onto +x."""
+  north = [torch.tensor([[0.0, 1.0, 0.3]]), torch.tensor([[0.0, 2.0, 0.3]]),
+           torch.tensor([[50.0, 50.0, 0.3]]),
+           torch.tensor([[50.0, 51.0, 0.3]]), torch.tensor([[50.0, 52.0, 0.3]])]
+  _record(tmp_path, env=_TrajEnv(north, yaw=math.pi / 2))
+  trajs = _pkl_trajs(tmp_path)
+  # walked +y in world while facing +y: that is straight FORWARD -> +x
+  for t in trajs:
+    assert t[:, 0:2].ravel().tolist() == pytest.approx([0.0, 0.0, 1.0, 0.0],
+                                                       abs=1e-6)
+
+
+def test_trajectory_recorder_matches_the_plot_script_contract(tmp_path):
+  """plot_trajectory_coverage.py::load_experiment + get_all_xy_points, verbatim.
+
+  If this breaks, the figure the recording exists for cannot be drawn.
+  """
+  import json
+  import os
+  import pickle
+
+  import numpy as np
+  _record(tmp_path, g=[torch.tensor([v]) for v in
+                       (1.0, 1.0, -1.0, 1.0, 1.0)])
+
+  with open(os.path.join(str(tmp_path), 'trajectories.pkl'), 'rb') as f:
+    traj_data = pickle.load(f)
+  with open(os.path.join(str(tmp_path), 'stats.json')) as f:
+    stats = json.load(f)
+  trajectories = traj_data['trajectories']
+  all_xy = np.vstack([t[:, 0:2] for t in trajectories])
+  assert all_xy.shape == (4, 2)
+  done_types = stats.get('done_types', ['unknown'] * len(trajectories))
+  assert len(done_types) == len(trajectories)
+  assert isinstance(stats['avg_distance'], float)
+  # episode 1 dipped to g=-1: 'failure' is the only value the script reads
+  assert done_types[0] == 'failure' and done_types[1] != 'failure'
+  n_success = sum(1 for d in done_types if d != 'failure')
+  assert n_success / len(done_types) == pytest.approx(0.5)
+
+
+def test_trajectory_recorder_captures_state_actions_decision_and_margins(
+    tmp_path):
+  import numpy as np
+  _record(tmp_path)
+  z = np.load(tmp_path / "trajectories_full.npz")
+  for k in ("root_pos", "root_quat", "root_lin_vel", "root_ang_vel",
+            "joint_pos", "joint_vel", "a_nom", "a_filt", "a_dstb", "engaged",
+            "value", "caution", "g", "l", "terminated", "truncated", "step",
+            "episode_ptr", "episode_env", "episode_done_type"):
+    assert k in z, f"missing field {k}"
+  assert z["episode_ptr"].tolist() == [0, 2, 4]
+  assert z["a_nom"].shape == (4, 2) and z["a_dstb"].shape == (4, 3)
+  # row t carries the START-of-step state with the decision made AT step t:
+  # first row = state after step 0, actions of step 1
+  assert z["a_nom"][0].tolist() == pytest.approx([0.1, 0.1])
+  assert z["a_filt"][0].tolist() == pytest.approx([0.2, 0.2])
+  assert z["a_dstb"][0].tolist() == pytest.approx([0.3, 0.3, 0.3])
+  assert z["step"].tolist() == [1.0, 2.0, 3.0, 4.0]
+  assert z["truncated"].tolist() == [0.0, 1.0, 0.0, 0.0]
+  assert z["root_pos"][0].tolist() == pytest.approx([1.0, 0.0, 0.3])
+  assert z["caution"].tolist() == [0.0] * 4       # qcbf reports no band
+
+
+def test_trajectory_recorder_records_only_the_requested_subset(tmp_path):
+  """512 x 1000 x every field is too big to keep; the other metrics do not
+  shrink with it."""
+  import numpy as np
+  pos = [torch.zeros(8, 3) + float(t) for t in range(5)]
+  env = _TrajEnv(pos, n=8)
+  rec = TrajectoryRecorder(env, str(tmp_path), traj_envs=3)
+  for t, dn in enumerate(_TRAJ_DONE):
+    env.i = t
+    m = torch.zeros(8, dtype=torch.bool) | dn
+    rec.update(_rec(t, g=torch.ones(8), l=-torch.ones(8), env=env, trunc=m,
+                    a_nom=torch.zeros(8, 2), a_filt=torch.zeros(8, 2)))
+  summary = rec.result()
+  assert summary["traj_envs_recorded"] == 3
+  assert summary["traj_episodes"] == 6            # 3 envs x 2 episodes
+  z = np.load(tmp_path / "trajectories_full.npz")
+  assert sorted(set(z["episode_env"].tolist())) == [0, 1, 2]
+
+
+def test_trajectory_recorder_does_not_influence_the_rollout():
+  """The Metric contract. Same seed, same stream, with and without recording."""
+  import tempfile
+
+  def actions(with_recorder):
+    env = _ToyEvalEnv()
+    fx = Fixture(DEV)
+    filt = build_filter("value", _mods(fx), _FakeEnv()).filt
+    m = MetricSet(InterventionMass())
+    if with_recorder:
+      env.robot.data.root_link_pos_w = torch.zeros(NUM_ENVS, 3)
+      env.robot.data.root_link_quat_w = torch.zeros(NUM_ENVS, 4)
+      env.robot.data.root_link_ang_vel_w = torch.zeros(NUM_ENVS, 3)
+      env.robot.data.joint_pos = torch.zeros(NUM_ENVS, ACT_DIM)
+      env.robot.data.joint_vel = torch.zeros(NUM_ENVS, ACT_DIM)
+      m = MetricSet(m, TrajectoryRecorder(env, tempfile.mkdtemp()))
+    run_eval(env, ZeroNominal(NUM_ENVS, ACT_DIM, DEV), filt, m, steps=5,
+             norm=lambda o: o, dstb_fn=lambda s: torch.full((NUM_ENVS, 3), 0.5),
+             dstb_scale=1.0)
+    return env.seen_dstb
+
+  a, b = actions(False), actions(True)
+  assert len(a) == len(b)
+  assert all(torch.equal(x, y) for x, y in zip(a, b))
 
 
 def test_wall_clock_averages_per_step():

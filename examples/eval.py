@@ -51,9 +51,9 @@ except ImportError:
 from robot_safety_sandbox import list_tasks, spec  # noqa: E402
 from robot_safety_sandbox.eval import (  # noqa: E402
   FILTERS, NominalPolicy, RolloutCfg, SwitchCfg, TwinNominal,
-  TwistCommandSurgery, VideoRecorder, ZeroNominal, build_eval_env, build_filter,
-  list_presets, load_nominal, load_twin, make_dstb, preset, protocol_metrics,
-  run_eval, safety_modules)
+  TrajectoryRecorder, TwistCommandSurgery, VideoRecorder, ZeroNominal,
+  build_eval_env, build_filter, list_presets, load_nominal, load_twin,
+  make_dstb, preset, protocol_metrics, run_eval, safety_modules)
 from robot_safety_sandbox.eval.metrics import MetricSet  # noqa: E402
 
 
@@ -157,6 +157,21 @@ def build_parser(pre_args):
                       "context — use MUJOCO_GL=egl on a headless box "
                       "(otherwise mujoco raises 'gladLoadGL error')")
   p.add_argument("--video-fps", type=int, default=30)
+  p.add_argument("--traj", default=None, metavar="DIR",
+                 help="record trajectories into DIR: trajectories.pkl + "
+                      "stats.json (the plot_trajectory_coverage.py contract) "
+                      "and trajectories_full.npz (state, both raw actions, the "
+                      "filter's decision, g/l, flags)")
+  p.add_argument("--traj-envs", type=int, default=64,
+                 help="--traj: record only the first N envs (the rest of the "
+                      "metrics still use the full population)")
+  p.add_argument("--traj-frame", default="spawn", choices=("spawn", "world"),
+                 help="--traj: frame of trajectories.pkl. 'spawn' puts each "
+                      "episode's start at the origin facing +x (what the "
+                      "coverage plot's star assumes -- mjlab spreads envs over "
+                      "the terrain grid and randomizes spawn yaw); 'world' "
+                      "writes raw simulator coordinates. The npz keeps world "
+                      "coordinates either way")
   p.add_argument("--tag", default=None, help="label copied into the summary")
 
   if pre_args.preset:
@@ -248,6 +263,14 @@ def main():
     extra = ps.metrics(args, env)
     if extra is not None:
       metrics = MetricSet(metrics, extra)
+  if args.traj:
+    n_traj = min(args.traj_envs, env.num_envs)
+    print(f"[traj] recording envs 0..{n_traj - 1} of {env.num_envs} "
+          f"({args.traj_frame} frame) -> {args.traj}")
+    metrics = MetricSet(metrics,
+                        TrajectoryRecorder(env, args.traj,
+                                           traj_envs=args.traj_envs,
+                                           frame=args.traj_frame))
 
   surgery = None
   if not args.no_command_surgery:

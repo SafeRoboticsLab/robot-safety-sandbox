@@ -30,8 +30,9 @@ from .filters import (
   FILTERS, FilterBundle, RolloutCfg, SwitchCfg, build_filter, build_shadow,
   reach_avoid_reduction)
 from .metrics import (
-  ActuatorJerk, Engagement, EpisodeOutcomes, InterventionMass, MarginStats,
-  Metric, MetricSet, StepRecord, WallClock, protocol_metrics)
+  ActuatorJerk, DistanceTravelled, Engagement, EpisodeOutcomes,
+  InterventionMass, MarginStats, Metric, MetricSet, StepRecord,
+  TrajectoryRecorder, WallClock, protocol_metrics)
 from .policies import (
   find_obs_stats, load_nominal, load_twin, safety_modules, twin_class_name)
 from .presets import EvalPreset, list_presets, preset, register
@@ -47,6 +48,7 @@ __all__ = [
   "build_shadow",
   "Metric", "MetricSet", "StepRecord", "EpisodeOutcomes", "MarginStats",
   "ActuatorJerk", "InterventionMass", "WallClock", "Engagement",
+  "DistanceTravelled", "TrajectoryRecorder",
   "protocol_metrics",
   "load_nominal", "load_twin", "twin_class_name", "safety_modules",
   "find_obs_stats",
