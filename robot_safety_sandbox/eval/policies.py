@@ -164,6 +164,11 @@ def load_twin(zip_path: str, device: str, quiet: bool = False):
   # learners' tensor path builds a device-resident replay buffer sized off
   # self.env -- which a checkpoint loaded for INFERENCE does not have. Override
   # both: no env, no buffer, actors and critic only.
+  # ``use_leaderboard`` goes the same way, and for a third reason: the league's
+  # ``model_dir`` is serialized as an ABSOLUTE path, so _setup_model tries to
+  # mkdir the TRAINING HOST's run directory and a checkpoint copied off that
+  # host dies with PermissionError on someone else's /home. Nothing in an
+  # evaluation reads the board.
   ctrl_dim = data.get("ctrl_action_dim")
   model, errors = None, []
   for name in dict.fromkeys(candidates):
@@ -172,8 +177,8 @@ def load_twin(zip_path: str, device: str, quiet: bool = False):
       continue
     kw = {"ctrl_action_dim": int(ctrl_dim)} if (
       "2P" in name and ctrl_dim is not None) else {}
-    custom = ({"_tensor_path": False, "buffer_size": 1} if "SAC" in name
-              else None)
+    custom = ({"_tensor_path": False, "buffer_size": 1,
+               "use_leaderboard": False} if "SAC" in name else None)
     try:
       model = cls.load(zip_path, device=device, custom_objects=custom, **kw)
       break
