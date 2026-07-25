@@ -32,8 +32,6 @@ step (see core.py on the latch contract).
 
 from __future__ import annotations
 
-import warnings
-
 from .core import SafetyFilter
 from .fallback import Fallback, PolicyFallback, ZeroFallback
 from .intervention import (
@@ -52,7 +50,6 @@ __all__ = [
   "QCBFIntervention",
   "safety_value_filter", "safety_critic_filter", "qcbf_filter",
   "gameplay_filter",
-  "ValueShield", "QCBFFilter", "RolloutShield",
 ]
 
 
@@ -122,30 +119,3 @@ def gameplay_filter(num_envs: int, device: str, fallback_fn, *,
     LeastRestrictiveIntervention(num_envs, device, action_dim=action_dim,
                                  **switch),
     telemetry=telemetry)
-
-
-# --- deprecated aliases (one release) ----------------------------------------
-
-def _deprecated(old: str, new: str) -> None:
-  warnings.warn(
-    f"{old} is deprecated and will be removed in the next release; use "
-    f"{new} (a SafetyFilter composition) instead.",
-    DeprecationWarning, stacklevel=3)
-
-
-def ValueShield(num_envs, device, value_fn, fallback_fn, **kw):  # noqa: N802
-  """Deprecated alias for :func:`safety_value_filter`."""
-  _deprecated("ValueShield", "safety_value_filter")
-  return safety_value_filter(num_envs, device, value_fn, fallback_fn, **kw)
-
-
-def QCBFFilter(num_envs, device, q_fn, fallback_fn, **kw):  # noqa: N802
-  """Deprecated alias for :func:`qcbf_filter`."""
-  _deprecated("QCBFFilter", "qcbf_filter")
-  return qcbf_filter(num_envs, device, q_fn, fallback_fn, **kw)
-
-
-def RolloutShield(*args, **kw):  # noqa: N802
-  """Deprecated alias for :func:`gameplay_filter` (still raises: see above)."""
-  _deprecated("RolloutShield", "gameplay_filter")
-  return gameplay_filter(*args, **kw)

@@ -75,9 +75,6 @@ class SafetyFilter:
     self.telemetry.update(info)
     return action, info
 
-  # Back-compat spelling of __call__ (the monolithic filters exposed .act).
-  act = __call__
-
   def reset(self, done: torch.Tensor) -> None:
     """Clear per-env state for envs that just finished. Call EVERY step."""
     self.fallback.reset(done)

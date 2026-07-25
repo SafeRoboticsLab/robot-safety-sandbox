@@ -1,25 +1,22 @@
-"""Record the reference (action, FilterInfo) traces of the monolithic filters.
-
-Run this BEFORE the filter refactor, on the pre-refactor code:
+"""(Re)record the reference (action, FilterInfo) traces of the safety filters.
 
     python tests/characterize_filters.py
 
-It drives the legacy ``ValueShield`` and ``QCBFFilter`` over a fixed synthetic
-episode stream (tests/filter_fixtures.py) and writes the traces to
-``tests/data/filter_characterization.pt``. ``test_filter_equivalence.py`` then
-replays the same stream through the composed ``SafetyFilter`` and asserts the
-traces match, which is what makes the refactor behavior-preserving rather than
-merely plausible.
+It drives the value filter and the Q-CBF filter over a fixed synthetic episode
+stream (tests/filter_fixtures.py) and writes the traces to
+``tests/fixtures/filter_characterization.pt``. ``test_filter_equivalence.py``
+replays the same stream and asserts the traces match.
 
-The legacy classes are also reachable after the refactor through the deprecated
-aliases, so re-running this script post-refactor regenerates an identical file.
+The COMMITTED snapshot was recorded on the pre-refactor monolithic filter
+classes; that is what makes the decomposition behavior-preserving rather than
+merely plausible. Re-running this script rewrites the anchor from the CURRENT
+code — do it only when a behavior change is intended and reviewed.
 """
 
 from __future__ import annotations
 
 import os
 import sys
-import warnings
 
 import torch
 
@@ -31,28 +28,21 @@ from filter_fixtures import Fixture, drive  # noqa: E402
 OUT = os.path.join(_HERE, "fixtures", "filter_characterization.pt")
 
 
-def _counters(filt):
-  """Counters live on ``filt`` pre-refactor and on ``filt.telemetry`` after."""
-  return getattr(filt, "telemetry", filt)
-
-
 def main() -> None:
-  with warnings.catch_warnings():
-    warnings.simplefilter("ignore", DeprecationWarning)
-    from robot_safety_sandbox.filters import QCBFFilter, ValueShield
+  from robot_safety_sandbox.filters import qcbf_filter, safety_value_filter
 
-    torch.manual_seed(0)
-    fx = Fixture()
+  torch.manual_seed(0)
+  fx = Fixture()
 
-    vs = ValueShield(fx.num_envs, fx.device, fx.value_fn, fx.fallback_fn)
-    value_trace = drive(vs.act, fx)
-    value_trace["engaged_steps"] = _counters(vs).engaged_steps.clone()
-    value_trace["caution_steps"] = _counters(vs).caution_steps.clone()
+  vs = safety_value_filter(fx.num_envs, fx.device, fx.value_fn, fx.fallback_fn)
+  value_trace = drive(vs, fx)
+  value_trace["engaged_steps"] = vs.telemetry.engaged_steps.clone()
+  value_trace["caution_steps"] = vs.telemetry.caution_steps.clone()
 
-    fx2 = Fixture()
-    qc = QCBFFilter(fx2.num_envs, fx2.device, fx2.q_fn, fx2.fallback_fn)
-    qcbf_trace = drive(qc.act, fx2)
-    qcbf_trace["engaged_steps"] = _counters(qc).engaged_steps.clone()
+  fx2 = Fixture()
+  qc = qcbf_filter(fx2.num_envs, fx2.device, fx2.q_fn, fx2.fallback_fn)
+  qcbf_trace = drive(qc, fx2)
+  qcbf_trace["engaged_steps"] = qc.telemetry.engaged_steps.clone()
 
   os.makedirs(os.path.dirname(OUT), exist_ok=True)
   torch.save({"value_filter": value_trace, "qcbf": qcbf_trace}, OUT)
