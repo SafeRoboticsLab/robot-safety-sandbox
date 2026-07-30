@@ -63,6 +63,44 @@ from robot_safety_sandbox.callbacks import (  # noqa: E402
   VideoWandbCallback,
 )
 
+def _wrap_filtered(env, args):
+  """Wrap the training env for the PORL comparison (both arms).
+
+  ``--porl`` alone gives the CONTROL arm: an unfiltered env that nonetheless
+  counts failures/episodes/margins, so the two curves are produced by identical
+  instrumentation. Adding ``--porl-twin`` gives the TREATMENT arm: the same env
+  stepped through a safety filter, with the EXECUTED action fed back into the
+  replay buffer.
+  """
+  if not args.porl:
+    return env
+  from robot_safety_sandbox.eval.filters import SwitchCfg, build_filter
+  from robot_safety_sandbox.eval.policies import load_twin, safety_modules
+  from robot_safety_sandbox.filtered_env import FilteredTensorEnv
+
+  if not args.porl_twin:
+    return FilteredTensorEnv(env)
+  model, norm = load_twin(args.porl_twin, args.device)
+  mods = safety_modules(model, env.num_envs, args.device)
+  mods["norm"] = norm
+  bundle = build_filter(
+    args.porl_filter, mods, _FilterEnvView(env, args.task),
+    switch=SwitchCfg(eps=args.porl_eps, smoothing=args.porl_smoothing))
+  return FilteredTensorEnv(env, bundle.filt, norm=norm)
+
+
+class _FilterEnvView:
+  """The handful of attributes ``build_filter`` reads off an eval env.
+
+  The value/critic recipes need only num_envs/device/task; the rollout ones
+  would also need cfg_builder, and are refused above rather than half-supported
+  (a shadow sim inside a training loop is a separate design question).
+  """
+
+  def __init__(self, env, task: str):
+    self.num_envs, self.device, self.task = env.num_envs, str(env.mj.device), task
+
+
 # NOTE: the leaderboard eval env is a RAW TensorVecEnv (the 2P learner dispatches
 # to `_eval_pair_tensor`, on-device, normalizing obs via the live training
 # normalizer). Profiling showed the league eval (not the numpy transfer) was the
@@ -101,6 +139,32 @@ def main():
                  help="tiny-budget verification: shrink learning_starts / eval "
                       "cadence / leaderboard sizes so a short run exercises every "
                       "code path (compose, gamma anneal, eval, leaderboard).")
+  # --- PORL: train the task policy INSIDE a safety filter -------------------
+  # Two arms, one code path. --porl alone is the CONTROL (unfiltered, counted);
+  # --porl + --porl-twin is the TREATMENT (filtered, executed action stored).
+  # Sharing the wrapper is deliberate: if the arms counted failures differently
+  # the headline plot would be measuring the instrumentation.
+  p.add_argument("--porl", action="store_true",
+                 help="PORL run: wrap the training env so failures/episodes/"
+                      "margins are counted into env/porl_* (both arms)")
+  p.add_argument("--porl-twin", default=None, metavar="ZIP",
+                 help="the fallback twin's checkpoint. Given -> FILTERED arm: "
+                      "every proposed action is certified by the filter and the "
+                      "EXECUTED action is what enters the replay buffer. "
+                      "Omitted -> control arm.")
+  p.add_argument("--porl-filter", default="critic",
+                 choices=["value", "critic", "qcbf"],
+                 help="which composition to train inside (default: critic = "
+                      "Safety Critic Filter, Q(s,u_nom) from a SAC twin). The "
+                      "rollout/gameplay monitors are deliberately not offered: "
+                      "a shadow sim inside the training loop is a separate "
+                      "design question, not a flag.")
+  p.add_argument("--porl-eps", type=float, default=0.0,
+                 help="switching threshold: hand over when the monitored "
+                      "margin <= eps (pick it with the epsilon sweep)")
+  p.add_argument("--porl-smoothing", action="store_true",
+                 help="use HeuristicSmoothingIntervention instead of the "
+                      "canonical switch (see examples/eval.py --smoothing)")
   # --- net arch (mirror train.py's --net; qf kept on its reference default) ---
   p.add_argument("--net", default="256,256,256",
                  help="comma-separated hidden dims for the pi (actor) net "
@@ -138,8 +202,20 @@ def main():
   p.add_argument("--gamma-anneal-frac", type=float, default=0.5,
                  help="geometric schedule: horizon fraction to reach --gamma-end")
   # --- entropy-temperature (alpha) floor/ceiling ---
+  p.add_argument("--target-entropy", default=None,
+                 help="SAC's entropy TARGET; 'auto' (SB3 default) means "
+                      "-dim(A), i.e. -12 for the go2's 12 joints. That asks a "
+                      "locomotion policy to be near-deterministic, so alpha is "
+                      "driven down and exploration dies early (E056: alpha "
+                      "collapses to the floor in every cell and the policy "
+                      "settles into a standstill). A LESS negative value "
+                      "(e.g. -4, -6) holds exploration open.")
   p.add_argument("--min-alpha", type=float, default=1e-3,
-                 help="floor on the learned entropy temperature (reference 1e-3)")
+                 help="floor on the learned entropy temperature (reference "
+                      "1e-3). A clamp, not an objective — it fights the "
+                      "entropy loss rather than changing what it asks for; "
+                      "prefer --target-entropy to keep exploration alive. "
+                      "0 (or negative) disables the floor.")
   p.add_argument("--max-alpha", type=float, default=None,
                  help="optional ceiling on the entropy temperature (default none)")
   # --- reach-avoid terminal valuation (reach-avoid learners only) ---
@@ -185,15 +261,23 @@ def main():
 
   # --- resolve task + learner (2x2: problem from margins, players from --adversary) ---
   s = spec(args.task)
-  if s.mode == CUMULATIVE:
+  cumulative = s.mode == CUMULATIVE
+  if cumulative and args.adversary:
     raise SystemExit(
-      f"'{args.task}' is a mode={CUMULATIVE!r} task (plain reward-maximizing RL "
-      f"on the env's dense reward, no margins) — train it with "
-      f"`train.py --family on_policy`; the SAC family here is safety-only.")
+      f"'{args.task}' is mode={CUMULATIVE!r}: there is no two-player "
+      "cumulative game (see registry.algo_name), so --adversary has no "
+      "meaning here.")
   # The MAP: M from the task's mode, A = SAC (this is the off-policy family),
   # P from --adversary. Resolve the NAME first, import lazily, so a missing cell
   # fails with a clear message rather than an ImportError at module load.
-  sac_name = algo_name(args.task, adversary=args.adversary, family="off_policy")
+  # mode="cumulative" resolves to the bare "SAC" under the MAP (no M prefix, no
+  # P suffix -- there is no two-player cumulative game). On the TENSOR path that
+  # is safety_sb3's CumulativeSAC1P rather than stock SB3 SAC: same backup
+  # (r + gamma*V'), but stock SB3 has no GPU-resident collect loop, and no
+  # executed-action readback -- which filtered training depends on.
+  sac_name = ("CumulativeSAC1P" if cumulative else
+              algo_name(args.task, adversary=args.adversary,
+                        family="off_policy"))
   try:
     import safety_sb3 as _sb3
     Algo = getattr(_sb3, sac_name)
@@ -206,7 +290,13 @@ def main():
   print(f"[algo] {args.task} adversary={two_player} -> {sac_name} "
         f"(reach_avoid={reach_avoid})")
 
-  tag = f"{args.task}_{sac_name.lower()}" + ("_smoke" if args.smoke else "")
+  # The two PORL arms share task AND learner, so the arm has to be in the tag or
+  # they would overwrite each other's run directory and wandb run.
+  arm = ""
+  if args.porl:
+    arm = f"_porl_{'filtered' if args.porl_twin else 'bare'}"
+  tag = (f"{args.task}_{sac_name.lower()}{arm}"
+         + ("_smoke" if args.smoke else ""))
   outdir = os.path.join(args.out, tag)
   os.makedirs(outdir, exist_ok=True)
   dump_config(outdir, args)   # reproducible: re-run with --config <outdir>/config.yaml
@@ -215,13 +305,24 @@ def main():
   env = make_tensor(args.task, args.num_envs, args.device,
                     adversary=two_player, end_criterion=args.end_criterion,
                     cfg_overrides=args.env_overrides)
+  env = _wrap_filtered(env, args)
   eff_ec = args.end_criterion if args.end_criterion is not None else s.end_criterion
   print(f"[end-criterion] {args.task} -> {eff_ec}"
         f"{' (override)' if args.end_criterion is not None else ' (task default)'}")
 
   # --- gamma-anneal schedule from the CLI (default = reference discrete jumps) ---
   from safety_sb3 import GeometricGammaAnneal, StepGammaAnneal
-  if args.gamma_schedule == "step":
+  if cumulative:
+    # The gamma anneal is a SAFETY-backup device: it walks the discount toward 1
+    # so the avoid/reach-avoid value approaches the infinite-horizon one. A
+    # cumulative return has no such limit to approach (gamma -> 1 diverges), and
+    # the anneal's alpha resets would wreck a reward-maximizing run. Force it
+    # off regardless of the CLI default.
+    gamma_anneal = False
+    if args.gamma_schedule != "off":
+      print(f"[gamma] --gamma-schedule {args.gamma_schedule} IGNORED on a "
+            f"mode={CUMULATIVE!r} task; gamma held at {args.gamma_init}")
+  elif args.gamma_schedule == "step":
     gamma_anneal = StepGammaAnneal(init=args.gamma_init, end=args.gamma_end,
                                    ratio=args.gamma_ratio,
                                    period_frac=args.gamma_period_frac)
@@ -246,6 +347,9 @@ def main():
     tau=args.tau,
     target_update_interval=args.target_update_interval,
     ent_coef=args.ent_coef,
+    **({} if args.target_entropy is None else
+       {"target_entropy": (args.target_entropy if args.target_entropy == "auto"
+                           else float(args.target_entropy))}),
     buffer_size=args.buffer_size,
     batch_size=args.batch_size,
     train_freq=1,
@@ -319,7 +423,14 @@ def main():
   # obs-normalizer stats are synced from the training env at each eval so the
   # metric sees the same normalization the policy trains on. reach_avoid flag
   # comes from the resolved learner; eval env carries the adversary iff 2P. ---
-  if args.eval_freq > 0:
+  if args.eval_freq > 0 and cumulative:
+    # SafeSuccessRateEvalCallback reads safe/success off (g, l). On a cumulative
+    # task the learner's g slot IS the dense reward, so those rates would be
+    # arithmetic on rewards wearing safety names. The run's quality signal is
+    # rollout/ep_rew_mean, and its SAFETY signal is env/porl_* from the wrapper.
+    print("[eval] safe/success-rate eval SKIPPED: meaningless on a "
+          f"mode={CUMULATIVE!r} task (g is the dense reward, not a margin)")
+  elif args.eval_freq > 0:
     from safety_sb3 import SafeSuccessRateEvalCallback
     from safety_sb3.tensor_env import TensorVecNormalize
     eval_n = 8 if args.smoke else args.eval_envs
@@ -386,6 +497,19 @@ def main():
         nfiles = len(os.listdir(lbdir)) if os.path.isdir(lbdir) else 0
         print(f"[smoke] leaderboard: {len(lb.ctrl_steps)} ctrl / "
               f"{len(lb.dstb_steps)} dstb archived; {nfiles} files in {lbdir}")
+    if args.porl:
+      m = env.metrics()
+      print("[smoke] porl counters: "
+            + str({k: round(v, 4) for k, v in m.items()
+                   if k.startswith("porl/")}))
+      # The contract the whole experiment rests on: the learner must be able to
+      # SEE the executed action through the normalizer wrapper. If this reports
+      # None, the filter is running but the buffer is storing proposals.
+      seen = getattr(model.env, "executed_action", None)
+      verdict = ("OK" if seen is not None else
+                 "NOT VISIBLE -- buffer would store PROPOSED actions")
+      print(f"[smoke] executed-action readback through "
+            f"{type(model.env).__name__}: {verdict}")
     ok = (os.path.exists(os.path.join(outdir, "final_model.zip"))
           and os.path.exists(os.path.join(outdir, "tensornormalize.pt")))
     print(f"[smoke] saved final_model.zip + tensornormalize.pt -> "

@@ -108,10 +108,32 @@ def safety_margin_hook(env, margin_fn=None) -> torch.Tensor:
   return g
 
 
+def margin_probe_hook(env, margin_fn=None) -> torch.Tensor:
+  """Compute (g, l) and stash them WITHOUT contributing to the reward.
+
+  The dense-reward + margins case (mode="cumulative" tasks that a safety filter
+  wraps at TRAIN time — see the PORL experiment): the learner's reward must stay
+  the env's own dense stack, but the filter's monitor and the failure counters
+  still need the task's margins, computed at the same instant and under the same
+  contract as a safety run.
+
+  Why this is a REWARD term returning zeros rather than a zero-weight one: mjlab
+  skips zero-weight terms outright (``RewardManager.compute``, "if
+  term_cfg.weight == 0.0: continue"), so a weight-0 hook would silently never
+  run. A weight-1 term whose func returns zeros DOES run and contributes exactly
+  ``0 * 1.0 * dt = 0``. And it has to run here, inside the reward manager,
+  because that is the only place margins are computed BEFORE mjlab's in-step
+  auto-reset — reading them afterwards would grade the post-reset state.
+  """
+  safety_margin_hook(env, margin_fn=margin_fn)   # stashes zoo_g / zoo_l
+  return torch.zeros_like(env.extras["zoo_g"])
+
+
 def build_task_cfg(cfg_builder: Callable, margin_fn: Callable, num_envs: int,
                    drop_events: tuple[str, ...] = ("push_robot",),
                    dense: bool = False, end_criterion: str = "failure",
-                   cfg_overrides: dict | None = None):
+                   cfg_overrides: dict | None = None,
+                   dense_margins: bool = False):
   """Assemble an mjlab cfg for the zoo: task cfg + the margin hook.
 
   ``drop_events`` removes events a learned adversary replaces (default: the
@@ -149,6 +171,14 @@ def build_task_cfg(cfg_builder: Callable, margin_fn: Callable, num_envs: int,
   if cfg.events is not None:
     for e in drop_events:
       cfg.events.pop(e, None)
+  if dense and dense_margins:
+    if margin_fn is None:
+      raise ValueError(
+        "dense_margins=True needs a margin_fn: it exists to give a dense-reward "
+        "task the margins a train-time safety filter monitors. Register the "
+        "task with the margin_fn of the twin that will be its fallback.")
+    cfg.rewards["zoo_margin_probe"] = RewardTermCfg(
+      func=margin_probe_hook, weight=1.0, params={"margin_fn": margin_fn})
   if not dense:
     if margin_fn is None:
       raise ValueError(
@@ -177,7 +207,7 @@ class _MjlabCore:
                  adversary_body, render_mode, obs_key=None, dense_reward=False,
                  dstb_mode="wrench", dstb_gain=0.25, hybrid_skill=None,
                  latch_margin_fn=None, end_criterion="failure",
-                 cfg_overrides=None):
+                 cfg_overrides=None, dense_margins=False):
     self.obs_key = obs_key  # resolved after first reset (auto-detect)
     self.end_criterion = str(end_criterion)
     self.ctrl_dim = int(ctrl_dim)
@@ -192,11 +222,18 @@ class _MjlabCore:
     self.dstb_gain = float(dstb_gain)
     self.adversary = bool(adversary)
     self.dense_reward = bool(dense_reward)  # Stage-1: train on the env reward
+    # dense reward AND margins: the reward stays the env's dense stack, while
+    # (g, l) are computed alongside it for a train-time filter / failure
+    # counters. Only meaningful with dense_reward=True.
+    self.dense_margins = bool(dense_margins) and self.dense_reward
+    self._safety_g = None
+    self._safety_l = None
     self.render_mode = render_mode
     self.mj = ManagerBasedRlEnv(
       cfg=build_task_cfg(cfg_builder, margin_fn, num_envs, dense=dense_reward,
                          end_criterion=self.end_criterion,
-                         cfg_overrides=cfg_overrides),
+                         cfg_overrides=cfg_overrides,
+                         dense_margins=self.dense_margins),
       device=device, render_mode="rgb_array" if render_mode else None)
     self._robot = self.mj.scene["robot"]
     if self.dstb_mode == "wrench":
@@ -310,6 +347,13 @@ class _MjlabCore:
         l = self.latch_margin_fn(self.mj).float()
       else:
         l = torch.zeros_like(g)
+      if self.dense_margins:
+        # The margin probe ran inside the reward manager (pre-auto-reset), so
+        # these are terminal-correct. They stay OFF the (g, l) the learner sees
+        # -- its reward must remain the dense stack -- and are read through
+        # safety_margins() by the filter and the failure counters.
+        self._safety_g = extras["zoo_g"].float()
+        self._safety_l = extras["zoo_l"].float()
     else:
       g = extras["zoo_g"].float()
       l = extras["zoo_l"].float()
@@ -340,6 +384,22 @@ class _MjlabCore:
     """
     return self._obs_dict
 
+  def safety_margins(self) -> tuple[torch.Tensor, torch.Tensor]:
+    """The task's (g, l) for the last step, on a DENSE-reward env.
+
+    Only available when the env was built with ``dense_margins=True`` -- a
+    plain cumulative env computes no margins at all, and returning zeros there
+    would read as "perfectly safe" to a monitor or a failure counter.
+    """
+    if not self.dense_margins:
+      raise RuntimeError(
+        "safety_margins() needs an env built with dense_margins=True (the "
+        "dense-reward + margins mode). A mode='cumulative' task gets it by "
+        "registering kwargs={'dense_margins': True} and a margin_fn.")
+    if self._safety_g is None:
+      raise RuntimeError("safety_margins() called before the first step")
+    return self._safety_g, self._safety_l
+
   def metrics(self) -> dict[str, float]:
     out, self._log = self._log, {}
     return out
@@ -365,7 +425,7 @@ class MjlabTensorSafetyEnv(_MjlabCore, TensorVecEnv):
                render_mode=None, obs_key=None, dense_reward=False,
                dstb_mode="wrench", dstb_gain=0.25, hybrid_skill=None,
                  latch_margin_fn=None, end_criterion="failure",
-               cfg_overrides=None):
+               cfg_overrides=None, dense_margins=False):
     if not _HAS_SAFETY_SB3:
       raise ImportError(
         "safety_sb3 is required for the tensor bridge (pip install it or put "
@@ -378,7 +438,7 @@ class MjlabTensorSafetyEnv(_MjlabCore, TensorVecEnv):
       render_mode=render_mode, obs_key=obs_key, dense_reward=dense_reward,
       dstb_mode=dstb_mode, dstb_gain=dstb_gain, hybrid_skill=hybrid_skill,
       latch_margin_fn=latch_margin_fn, end_criterion=end_criterion,
-      cfg_overrides=cfg_overrides)
+      cfg_overrides=cfg_overrides, dense_margins=dense_margins)
     TensorVecEnv.__init__(self, int(num_envs), obs_space, act_space, device)
 
   def reset(self) -> torch.Tensor:
@@ -413,7 +473,8 @@ class MjlabNumpySafetyEnv(_MjlabCore, VecEnv):
                adversary=False, adversary_body="base_link", render_mode=None,
                obs_key=None, dense_reward=False, dstb_mode="wrench",
                dstb_gain=0.25, hybrid_skill=None, latch_margin_fn=None,
-               end_criterion="failure", cfg_overrides=None):
+               end_criterion="failure", cfg_overrides=None,
+               dense_margins=False):
     obs_space, act_space = self._init_core(
       num_envs, device, cfg_builder, margin_fn, ctrl_dim=ctrl_dim,
       dstb_dim=dstb_dim, ctrl_gain=ctrl_gain, force_max=force_max,
@@ -421,7 +482,7 @@ class MjlabNumpySafetyEnv(_MjlabCore, VecEnv):
       render_mode=render_mode, obs_key=obs_key, dense_reward=dense_reward,
       dstb_mode=dstb_mode, dstb_gain=dstb_gain, hybrid_skill=hybrid_skill,
       latch_margin_fn=latch_margin_fn, end_criterion=end_criterion,
-      cfg_overrides=cfg_overrides)
+      cfg_overrides=cfg_overrides, dense_margins=dense_margins)
     self._device = device
     VecEnv.__init__(self, int(num_envs), obs_space, act_space)
     self._actions = None

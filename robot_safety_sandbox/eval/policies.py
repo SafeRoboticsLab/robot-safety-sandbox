@@ -60,24 +60,73 @@ def find_obs_stats(zip_path: str, prefix: str, flat: str) -> str | None:
 
 # --- the nominal policy (pi_task) --------------------------------------------
 
+class _TensorNorm:
+  """``tensornormalize.pt`` statistics behind VecNormalize's numpy interface.
+
+  Lets :class:`~robot_safety_sandbox.eval.runner.NominalPolicy` treat a
+  tensor-path checkpoint exactly like a stock SB3 one -- same call site, same
+  clip convention (+-10) the learners train under.
+  """
+
+  def __init__(self, pt_path: str, device: str):
+    st = torch.load(pt_path, map_location="cpu", weights_only=True)
+    self.mean = st["obs_mean"].numpy()
+    self.var = st["obs_var"].numpy()
+    self.training = False
+
+  def normalize_obs(self, obs):
+    import numpy as _np
+    return _np.clip((obs - self.mean) / _np.sqrt(self.var + 1e-8), -10.0, 10.0)
+
+
 def load_nominal(zip_path: str, device: str, quiet: bool = False):
-  """A stock SB3 policy + its numpy VecNormalize stats (or None).
+  """A task policy + its numpy VecNormalize stats (or None).
 
   Returns ``(model, vecnormalize_or_None)``. The normalizer is put in
   inference mode; a run directory without one is legal (the nominal simply
   consumes raw observations) and is reported rather than guessed at.
+
+  PPO or SAC is resolved from the checkpoint by the same fingerprint
+  :func:`twin_class_name` uses -- SAC serializes ``actor.optimizer.pth`` where
+  PPO serializes ``policy.optimizer.pth``. Both families train mode="cumulative"
+  task policies (on-policy via ``train.py --family on_policy``, off-policy via
+  ``--family off_policy``, e.g. the PORL walkers), so the nominal cannot be
+  assumed to be a PPO zip.
   """
-  from stable_baselines3 import PPO
-  model = PPO.load(zip_path, device=device)
+  with zipfile.ZipFile(zip_path) as z:
+    is_sac = "actor.optimizer.pth" in z.namelist()
+  if is_sac:
+    # A cumulative SAC walker: safety_sb3's CumulativeSAC1P if this install has
+    # it, else stock SB3 SAC (the weights are layout-identical).
+    try:
+      import safety_sb3
+      cls = safety_sb3.CumulativeSAC1P
+    except (ImportError, AttributeError):
+      from stable_baselines3 import SAC as cls
+    # no env and no device-resident replay buffer for an inference load
+    model = cls.load(zip_path, device=device,
+                     custom_objects={"_tensor_path": False, "buffer_size": 1})
+  else:
+    from stable_baselines3 import PPO
+    model = PPO.load(zip_path, device=device)
   vn_path = find_obs_stats(zip_path, "vecnormalize", "vecnormalize.pkl")
-  vn = None
+  vn, src = None, "NO NORM"
   if vn_path:
     with open(vn_path, "rb") as f:
       vn = pickle.load(f)
     vn.training = False
+    src = os.path.basename(vn_path)
+  else:
+    # A tensor-path learner keeps its obs statistics in tensornormalize.pt, not
+    # a VecNormalize pickle, and does NOT normalize inside predict(). Falling
+    # through with vn=None would feed it raw observations and quietly produce a
+    # different policy than the one that was trained.
+    pt = find_obs_stats(zip_path, "tensornorm", "tensornormalize.pt")
+    if pt:
+      vn = _TensorNorm(pt, device)
+      src = os.path.basename(pt)
   if not quiet:
-    print(f"[nominal] {zip_path} "
-          f"(+ {os.path.basename(vn_path) if vn_path else 'NO NORM'})")
+    print(f"[nominal] {zip_path} ({type(model).__name__}) (+ {src})")
   return model, vn
 
 
