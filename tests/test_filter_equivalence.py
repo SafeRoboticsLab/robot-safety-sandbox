@@ -47,11 +47,18 @@ def _assert_same(new: dict, ref: dict, keys) -> None:
 
 
 def test_value_filter_matches_legacy_snapshot(snapshot):
-  """SafetyFilter(PolicyFallback, ValueMonitor, LeastRestrictive) reproduces the
-  pre-refactor value filter."""
+  """SafetyFilter(PolicyFallback, ValueMonitor, HeuristicSmoothing) reproduces
+  the pre-refactor value filter.
+
+  ``smoothing=True`` is REQUIRED here and is not a style choice: the snapshot
+  pins the original ``eval_filter.py`` BatchValueFilter, which was the latched,
+  median-smoothed, hysteresis-released switch. The canonical
+  LeastRestrictiveIntervention is a different rule and does not reproduce it --
+  which is the whole reason the two now have different names.
+  """
   fx = Fixture()
   filt = safety_value_filter(fx.num_envs, fx.device, fx.value_fn,
-                             fx.fallback_fn)
+                             fx.fallback_fn, smoothing=True)
   trace = drive(filt, fx)
   _assert_same(trace, snapshot["value_filter"],
                ["action", "engaged", "value", "caution"])

@@ -287,8 +287,27 @@ registered by the task that owns it.
 | environment | `--task` / `--preset` / `--env-override` | `eval/envs.py` |
 | nominal `pi_task` | `--nominal` (or `--nominal-from-twin`) | `eval/policies.py` |
 | filter | `--filter {value,critic,qcbf,rollout,gameplay}` | `eval/filters.py` |
+| intervention | `--eps` (+ `--smoothing`, see below) | `filters/intervention.py` |
 | attack | `--dstb {none,random,policy}` `--dstb-scale` | `eval/runner.py` |
 | metrics | automatic (+ the preset's extras) | `eval/metrics.py` |
+
+**Which switch you get.** Every filter but `qcbf` composes
+`LeastRestrictiveIntervention`, and that is the canonical rule and nothing
+more — pass the nominal iff `Delta > eps`, hand over to the fallback entirely
+otherwise, no state carried between steps. It is Def-2 valid by construction
+under an exact monitor.
+
+`--smoothing` substitutes `HeuristicSmoothingIntervention` instead: the same
+switch wrapped in an engagement latch, a 5-step median, release hysteresis, and
+a rest-speed release gate (`--caution`, `--hysteresis`, `--rest-speed` apply
+only then). Those four heuristics were tuned on the gap/crawl gauntlets; they
+are strictly more conservative and **not** Def-2 valid step-by-step, so a run
+using them is a *smoothed variant* of the named filter and has to be reported
+as one — never as the published Safety Value / Safety Critic / Gameplay filter.
+
+⚠ Every gauntlet before 2026-07-25 (E051 and E054 included) ran the smoothed
+variant, which was then the only implementation and the default. Reproducing
+those numbers needs `--smoothing`; the default no longer gives them.
 
 ```bash
 # flat ground, walking under a swept adversarial attack

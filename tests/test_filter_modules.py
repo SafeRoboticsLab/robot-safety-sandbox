@@ -117,10 +117,33 @@ def test_least_restrictive_switches_hard():
   assert torch.equal(a[~eng], fx.a_nom[0][~eng])
 
 
-def test_latch_and_history_clear_on_reset():
-  """The 77%-livelock contract: reset(done) drops the latch."""
+def test_canonical_switch_is_memoryless():
+  """LeastRestrictiveIntervention carries NO state between steps.
+
+  The whole rule is one comparison, so replaying the same step must give the
+  same decision no matter what came before it -- which is what makes it Def-2
+  valid (see test_filter_validity) and what distinguishes it from the smoothed
+  variant below.
+  """
   fx = Fixture()
   filt = safety_value_filter(NUM_ENVS, DEV, fx.value_fn, fx.fallback_fn)
+  _, first = filt(fx.a_nom[0], **_ctx(fx, 0))
+  for t in range(1, 20):            # drive it far away from step 0
+    filt(fx.a_nom[t], **_ctx(fx, t))
+  _, again = filt(fx.a_nom[0], **_ctx(fx, 0))
+  assert torch.equal(first.engaged, again.engaged)
+  assert first.caution is None, "the caution band belongs to the smoothed variant"
+
+
+def test_latch_and_history_clear_on_reset():
+  """The 77%-livelock contract: reset(done) drops the latch.
+
+  A property of HeuristicSmoothingIntervention specifically -- the canonical
+  switch has no latch to drop.
+  """
+  fx = Fixture()
+  filt = safety_value_filter(NUM_ENVS, DEV, fx.value_fn, fx.fallback_fn,
+                             smoothing=True)
   for t in range(20):
     filt(fx.a_nom[t], **_ctx(fx, t))
   assert filt.intervention.engaged.any()

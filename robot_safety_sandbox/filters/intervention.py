@@ -15,6 +15,15 @@ Two families:
                                  projected-gradient solver for the class-K
                                  barrier constraint Q(x, u) >= kappa * V(x).
 
+Plus one NON-CANONICAL member, kept separate on purpose:
+
+  HeuristicSmoothingIntervention  the switch above wrapped in field heuristics
+                                  (median smoothing, engagement latch, release
+                                  hysteresis, rest-speed gate). NOT a category
+                                  from the literature and NOT Def-2 valid
+                                  instant-by-instant. Never name it after a
+                                  published filter.
+
 Margin convention throughout: safe iff >= 0.
 """
 
@@ -44,10 +53,80 @@ class Intervention(ABC):
 
 
 class LeastRestrictiveIntervention(Intervention):
+  """The switching filter of the literature: ONE memoryless comparison.
+
+      phi(x, u) = u          if  Delta(x, u) > eps
+                  pi^<(x)    otherwise
+
+  That is the whole rule. No history, no latch, no hysteresis, no gate on the
+  robot's speed — the decision at step t depends only on the monitor's value at
+  step t, so the filter holds authority for exactly as long as the monitor says
+  it must and returns it the instant it does not. "Least restrictive" is that
+  minimality: among all filters that keep the monitor certified, the switch
+  overrides on the smallest possible set of states.
+
+  This is the form Def. 2 validity is stated for (Hsu, Hu & Fisac, Def. 2:
+  Delta(x, pi^<(x)) >= 0 => Delta(x, phi(x, u)) >= 0 for all u), and with an
+  exact monitor it satisfies it BY CONSTRUCTION: whenever the fallback itself is
+  certified, either the nominal already scores above eps and is safe to pass, or
+  the output IS the fallback. Nothing here can be talked into an uncertified
+  action by an adversarial nominal, because nothing here has state for an
+  adversary to drive.
+
+  Composed with a ValueMonitor this is the Safety Value Filter; with a
+  CriticMonitor, the Safety Critic Filter (the Gameplay-Filters baseline); with
+  an AdversarialRolloutMonitor, the Gameplay Filter — the same object in all
+  three.
+
+  For the deployed variant that trades pointwise strictness for chatter
+  robustness, see :class:`HeuristicSmoothingIntervention` — which is a
+  DIFFERENT object with a deliberately unofficial name, not a configuration of
+  this one.
+
+  :param eps: engagement threshold on the margin; hand over when
+      ``Delta <= eps``. The canonical setting is 0.0 (the boundary of the
+      monitor's own safe set); a positive eps buys conservatism, a negative one
+      spends it.
+  """
+
+  def __init__(self, num_envs: int, device: str, eps: float = 0.0,
+               action_dim: int | None = None):
+    super().__init__(num_envs, device, action_dim)
+    self.eps = float(eps)
+
+  def __call__(self, a_nom: torch.Tensor, fallback, monitor, *,
+               speed: torch.Tensor | None = None,
+               fresh: torch.Tensor | None = None,
+               **ctx) -> tuple[torch.Tensor, FilterInfo]:
+    """``speed`` and ``fresh`` are accepted so this is a drop-in for the
+    heuristic variant (the runner supplies both every step) and then DISCARDED:
+    a memoryless rule has no episode boundary to honour and no release
+    condition to gate. They are not forwarded to the monitor or the fallback,
+    which would otherwise see kwargs that belong to the switch."""
+    del speed, fresh
+    value = monitor(a_nom, fallback=fallback, **ctx)
+    engaged = value <= self.eps
+    a_safe = fallback(**ctx)
+    action = torch.where(engaged.unsqueeze(-1), a_safe, a_nom)
+    return action, FilterInfo(engaged=engaged, value=value)
+
+
+class HeuristicSmoothingIntervention(Intervention):
   """Latched eps-switch on the monitored margin, with a caution band.
 
-  The protocol proven out by the gap/crawl filter gauntlets (the library form
-  of the original eval_filter.py BatchValueFilter):
+  ⚠ NOT A LITERATURE CATEGORY. This is :class:`LeastRestrictiveIntervention`
+  plus four field heuristics, and it is deliberately named after what it does
+  rather than after any published filter, because it is NOT the least-
+  restrictive switch and must never be reported as one. The four additions —
+  median smoothing, an engagement latch, release hysteresis, and a rest-speed
+  release gate — all EXPAND the override set beyond the minimal one, and they
+  make the rule stateful, so Def. 2 validity does not hold instant-by-instant
+  (see ``tests/test_filter_validity.py``: the canonical switch passes on
+  streams where this does not). They were tuned empirically on the gap/crawl
+  gauntlets, where the nominal is a blind walker approaching a hazard.
+
+  The protocol proven out by those gauntlets (the library form of the original
+  eval_filter.py BatchValueFilter):
 
     engage   when median-smoothed Delta <= eps  (or raw Delta clearly below)
     release  when Delta > eps + hysteresis AND the robot is near rest
@@ -65,9 +144,12 @@ class LeastRestrictiveIntervention(Intervention):
   - Release requires NEAR REST, not just a recovered margin: releasing at speed
     hands the nominal a state it never visits in training.
 
-  Composed with a ValueMonitor this is the Safety Value Filter; with a
-  CriticMonitor, the Safety Critic Filter; with an AdversarialRolloutMonitor,
-  the Gameplay Filter — the same object in all three.
+  Composing this with a ValueMonitor does NOT give you the Safety Value Filter,
+  and with a CriticMonitor it is NOT the Gameplay-Filters baseline: those names
+  denote the canonical switch. A composition built on this intervention is a
+  smoothed variant of the named filter and has to be reported as one — the
+  difference between the two is precisely the safety margin the smoothing
+  spends.
 
   :param eps: engagement threshold on the margin.
   :param caution: upper edge of the caution band (>= eps).

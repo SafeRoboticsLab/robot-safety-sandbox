@@ -27,10 +27,10 @@ from ..registry import REACH_AVOID, spec
 
 #: --filter -> one line on what it is and what the twin must supply.
 FILTERS = {
-  "value":    "V(s) from an on-policy twin, latched switch",
-  "critic":   "Q(s, u_nom) from a SAC twin, same latched switch",
+  "value":    "V(s) from an on-policy twin, least-restrictive switch",
+  "critic":   "Q(s, u_nom) from a SAC twin, the same switch",
   "qcbf":     "Q(s, u) from a SAC twin, minimal modification (R-CBF)",
-  "rollout":  "simulate pi^< for H steps in a shadow env, latched switch",
+  "rollout":  "simulate pi^< for H steps in a shadow env, same switch",
   "gameplay": "the same rollout, played against the twin's dstb actor",
 }
 
@@ -41,14 +41,45 @@ FILTER_NEEDS = {"value": "value_fn", "critic": "q_fn", "qcbf": "q_fn",
 
 @dataclass
 class SwitchCfg:
-  """LeastRestrictiveIntervention's knobs (the latched eps-switch)."""
+  """The switching intervention's knobs.
+
+  Default is the CANONICAL ``LeastRestrictiveIntervention``, whose entire rule
+  is ``pass the nominal iff Delta > eps`` -- so ``eps`` is its ONLY knob. The
+  rest of this dataclass exists for ``smoothing=True``, which substitutes
+  ``HeuristicSmoothingIntervention`` (latch + median + hysteresis + rest gate):
+  a strictly more conservative, stateful, non-canonical variant that must be
+  reported as a smoothed variant of the named filter, never as the published
+  one.
+
+  ⚠ E051/E054 and every earlier gauntlet ran the SMOOTHED variant -- it was the
+  only implementation at the time. Reproducing those numbers needs
+  ``smoothing=True``; the default here no longer does.
+  """
   eps: float = 0.0
+  #: swap in HeuristicSmoothingIntervention (everything below applies only then)
+  smoothing: bool = False
   caution: float = 0.45
   hysteresis: float = 0.15
+  rest_speed: float = 0.4
+  median_window: int = 5
+  dip_margin: float = 0.15
 
   def kwargs(self) -> dict:
-    return dict(eps=self.eps, caution=self.caution,
-                hysteresis=self.hysteresis)
+    """Builder kwargs, including ``smoothing`` -- which every switching builder
+    takes and which selects the intervention class."""
+    if not self.smoothing:
+      return dict(eps=self.eps, smoothing=False)
+    return dict(eps=self.eps, smoothing=True, caution=self.caution,
+                hysteresis=self.hysteresis, rest_speed=self.rest_speed,
+                median_window=self.median_window, dip_margin=self.dip_margin)
+
+  def describe(self) -> str:
+    if not self.smoothing:
+      return f"LeastRestrictiveIntervention (canonical switch, eps={self.eps})"
+    return (f"HeuristicSmoothingIntervention (NON-canonical: eps={self.eps} "
+            f"caution={self.caution} hys={self.hysteresis} "
+            f"rest_speed={self.rest_speed} window={self.median_window} "
+            f"dip={self.dip_margin})")
 
 
 @dataclass
@@ -172,6 +203,8 @@ def build_filter(kind: str, mods: dict, env, *, switch: SwitchCfg | None = None,
   switch = switch or SwitchCfg()
   rollout = rollout or RolloutCfg()
   n, device = env.num_envs, env.device
+  if kind != "qcbf":   # the only recipe that does not switch
+    print(f"[filter] {kind}: intervention = {switch.describe()}")
 
   if kind == "value":
     return FilterBundle(F.safety_value_filter(

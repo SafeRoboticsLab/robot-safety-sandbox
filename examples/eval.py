@@ -116,9 +116,24 @@ def build_parser(pre_args):
                                             for k, v in FILTERS.items()))
   p.add_argument("--no-filter", action="store_true",
                  help="CONTROL arm: run the nominal unfiltered")
-  p.add_argument("--eps", type=float, default=0.0)
-  p.add_argument("--caution", type=float, default=0.45)
-  p.add_argument("--hysteresis", type=float, default=0.15)
+  p.add_argument("--eps", type=float, default=0.0,
+                 help="switching threshold: hand over to the fallback when the "
+                      "monitored margin <= eps")
+  p.add_argument("--smoothing", action="store_true",
+                 help="use HeuristicSmoothingIntervention (latch + 5-step "
+                      "median + release hysteresis + rest-speed gate) instead "
+                      "of the canonical LeastRestrictiveIntervention. NOT a "
+                      "literature filter and not Def-2 valid step-by-step: "
+                      "strictly more conservative, and results must be "
+                      "reported as a smoothed VARIANT of the named filter. "
+                      "Required to reproduce E051/E054 and every gauntlet "
+                      "before 2026-07-25, which predate the canonical switch.")
+  p.add_argument("--caution", type=float, default=0.45,
+                 help="--smoothing only: upper edge of the caution band")
+  p.add_argument("--hysteresis", type=float, default=0.15,
+                 help="--smoothing only: release needs margin > eps + this")
+  p.add_argument("--rest-speed", type=float, default=0.4,
+                 help="--smoothing only: release also needs speed < this")
   p.add_argument("--kappa", type=float, default=0.8,
                  help="--filter qcbf: class-K coefficient, Q(x,u) >= kappa V(x)")
   p.add_argument("--horizon", type=int, default=20,
@@ -220,8 +235,9 @@ def main():
   mods["norm"] = norm
   bundle = build_filter(
     args.filter, mods, env,
-    switch=SwitchCfg(eps=args.eps, caution=args.caution,
-                     hysteresis=args.hysteresis),
+    switch=SwitchCfg(eps=args.eps, smoothing=args.smoothing,
+                     caution=args.caution, hysteresis=args.hysteresis,
+                     rest_speed=args.rest_speed),
     rollout=RolloutCfg(horizon=args.horizon, rollouts=args.rollouts,
                        recertify_every=args.recertify_every,
                        contact_history=args.contact_history),

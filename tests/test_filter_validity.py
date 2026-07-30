@@ -10,15 +10,18 @@ filter into an uncertified output. ``assert_valid`` below takes any composition
 and a context stream and checks exactly that, over adversarially varied nominal
 actions.
 
-One caveat worth stating loudly. The DEPLOYED LeastRestrictiveIntervention is
-deliberately NOT Def-2 valid instant-by-instant: median smoothing, release
-hysteresis and the rest-speed gate trade pointwise strictness for chatter
-robustness (a single-step V dip at a contact event must not trigger a handover;
-a release at speed must not hand back a state the nominal never trained on).
-Those are field-validated heuristics, not bugs. The validity property is
-therefore checked in the STRICT configuration (window=1, no hysteresis, no rest
-gate), which is the un-smoothed switch the theory describes; the difference
-between the two is precisely the safety margin the smoothing spends.
+``LeastRestrictiveIntervention`` — one memoryless comparison, ``Delta > eps`` —
+satisfies this BY CONSTRUCTION under an exact monitor, so the checks below are
+run on the default composition and are expected to pass outright.
+
+The contrast is kept deliberately. ``HeuristicSmoothingIntervention`` (opt in
+with ``smoothing=True``) is NOT Def-2 valid instant-by-instant: median
+smoothing, release hysteresis and the rest-speed gate trade pointwise
+strictness for chatter robustness (a single-step V dip at a contact event must
+not trigger a handover; a release at speed must not hand back a state the
+nominal never trained on). Those are field-validated heuristics, not bugs — and
+the reason that variant does not carry a literature name. The last test below
+pins the difference, which is precisely the safety margin the smoothing spends.
 """
 
 from __future__ import annotations
@@ -40,8 +43,6 @@ from robot_safety_sandbox.filters import (  # noqa: E402
   safety_value_filter)
 
 DEV = "cpu"
-STRICT = dict(median_window=1, hysteresis=0.0, rest_speed=float("inf"),
-              caution=0.0)
 
 
 def assert_valid(filt, fx: Fixture, ctx_keys=("s_obs",), steps: int = 60,
@@ -83,15 +84,14 @@ def assert_valid(filt, fx: Fixture, ctx_keys=("s_obs",), steps: int = 60,
 def test_value_filter_is_valid():
   """Trivially valid: a state monitor cannot be moved by the action."""
   fx = Fixture()
-  filt = safety_value_filter(NUM_ENVS, DEV, fx.value_fn, fx.fallback_fn,
-                             **STRICT)
+  filt = safety_value_filter(NUM_ENVS, DEV, fx.value_fn, fx.fallback_fn)
   assert assert_valid(filt, fx) > 0
 
 
-def test_critic_filter_is_valid_in_strict_config():
+def test_critic_filter_is_valid():
   """The interesting case: Q moves with u, and the hard switch must catch it."""
   fx = Fixture()
-  filt = safety_critic_filter(NUM_ENVS, DEV, fx.q_fn, fx.fallback_fn, **STRICT)
+  filt = safety_critic_filter(NUM_ENVS, DEV, fx.q_fn, fx.fallback_fn)
   assert assert_valid(filt, fx) > 0
 
 
@@ -107,16 +107,16 @@ def _rollout_stream(fx: Fixture):
   return holder, sim, (lambda t: holder.update(x=fx.obs[t][:, 0] * 0.3))
 
 
-def test_rollout_filter_is_valid_in_strict_config():
+def test_rollout_filter_is_valid():
   """The gameplay composition, run through the SAME Def-2 harness as the value
   and critic filters — the monitor is the only thing that changed."""
   fx = Fixture()
   holder, sim, on_step = _rollout_stream(fx)
-  filt = rollout_filter(NUM_ENVS, DEV, fx.fallback_fn, sim, 6, **STRICT)
+  filt = rollout_filter(NUM_ENVS, DEV, fx.fallback_fn, sim, 6)
   assert assert_valid(filt, fx, steps=40, on_step=on_step) > 0
 
 
-def test_adversarial_rollout_filter_is_valid_in_strict_config():
+def test_adversarial_rollout_filter_is_valid():
   fx = Fixture()
   holder, sim, on_step = _rollout_stream(fx)
 
@@ -131,7 +131,7 @@ def test_adversarial_rollout_filter_is_valid_in_strict_config():
   sim = _WithDstb(NUM_ENVS, lambda: holder["x"], dt=0.05)
   filt = gameplay_filter(
     NUM_ENVS, DEV, fx.fallback_fn, sim, 6,
-    lambda s_obs, **_: -0.3 * torch.ones(s_obs.shape[0], 1), **STRICT)
+    lambda s_obs, **_: -0.3 * torch.ones(s_obs.shape[0], 1))
   assert assert_valid(filt, fx, steps=40, on_step=on_step) > 0
 
 
@@ -160,19 +160,21 @@ def test_qcbf_filter_is_valid_for_kappa_in_unit_interval(kappa):
   assert checked > 0
 
 
-def test_smoothed_config_is_documented_as_weaker():
-  """The deployed (smoothed/hysteretic) switch may transiently violate Def. 2.
+def test_smoothed_variant_is_documented_as_weaker():
+  """HeuristicSmoothingIntervention may transiently violate Def. 2.
 
-  Not a bug — the smoothing is what buys chatter robustness. This test pins the
-  trade-off so it is a recorded property rather than a surprise: it asserts the
-  STRICT config is valid on a stream where the DEPLOYED default is not.
+  Not a bug, and not a claim about the canonical switch — the smoothing is what
+  buys chatter robustness, and it is why that variant carries an unofficial
+  name. This test pins the trade-off as a recorded property: the canonical
+  LeastRestrictiveIntervention is valid on a stream where the smoothed variant
+  is not.
   """
   fx = Fixture()
-  strict = safety_critic_filter(NUM_ENVS, DEV, fx.q_fn, fx.fallback_fn,
-                                **STRICT)
-  assert assert_valid(strict, fx, steps=STEPS // 2) > 0
+  canonical = safety_critic_filter(NUM_ENVS, DEV, fx.q_fn, fx.fallback_fn)
+  assert assert_valid(canonical, fx, steps=STEPS // 2) > 0
 
-  loose = safety_critic_filter(NUM_ENVS, DEV, fx.q_fn, fx.fallback_fn)
+  loose = safety_critic_filter(NUM_ENVS, DEV, fx.q_fn, fx.fallback_fn,
+                               smoothing=True)
   violations = 0
   for t in range(STEPS // 2):
     ctx = dict(s_obs=fx.obs[t])

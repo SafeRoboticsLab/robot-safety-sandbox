@@ -15,11 +15,14 @@ contains NO monitor/fallback branching: the intervention consults both itself,
 which is exactly what lets the same LeastRestrictiveIntervention serve the
 value, critic and gameplay filters unchanged.
 
-Episode boundaries matter. Modules may hold per-env state (the switch latch,
-the margin history), and an uncleared latch is a real bug class — a stale latch
-once left a fallback driving fresh episodes for a 77% livelock — so callers
-MUST call ``reset(done)`` every step with the env's done mask. ``reset`` routes
-to all three modules; whichever ones hold state clear it.
+Episode boundaries matter. The canonical ``LeastRestrictiveIntervention`` is
+memoryless and has nothing to clear, but other modules DO hold per-env state —
+``RolloutMonitor``'s latched verdict, and ``HeuristicSmoothingIntervention``'s
+engagement latch and margin history. An uncleared latch is a real bug class (a
+stale one once left a fallback driving fresh episodes for a 77% livelock), so
+callers MUST call ``reset(done)`` every step with the env's done mask
+regardless of which modules are composed. ``reset`` routes to all three;
+whichever ones hold state clear it.
 """
 
 from __future__ import annotations
