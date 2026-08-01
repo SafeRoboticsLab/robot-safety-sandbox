@@ -63,29 +63,30 @@ from robot_safety_sandbox.callbacks import (  # noqa: E402
   VideoWandbCallback,
 )
 
-def _wrap_filtered(env, args):
-  """Wrap the training env for the PORL comparison (both arms).
+def _wrap_safety_filter(env, args):
+  """Wrap the training env in a safety filter, per the ``safety_filter:`` config.
 
-  ``--porl`` alone gives the CONTROL arm: an unfiltered env that nonetheless
-  counts failures/episodes/margins, so the two curves are produced by identical
-  instrumentation. Adding ``--porl-twin`` gives the TREATMENT arm: the same env
-  stepped through a safety filter, with the EXECUTED action fed back into the
-  replay buffer.
+  Presence of ``safety_policy`` (the fallback twin's checkpoint) selects the
+  FILTERED (treatment) arm: every proposed action is certified by the filter and
+  the EXECUTED action is what enters the replay buffer. Absence returns the bare
+  env -- the unfiltered (control) arm -- which already counts failures on its
+  own, so both arms share one accounting path. See docs/safety-filter-training.md.
   """
-  if not args.porl:
+  sf = args.safety_filter or {}
+  policy = sf.get("safety_policy")
+  if not policy:
     return env
   from robot_safety_sandbox.eval.filters import SwitchCfg, build_filter
   from robot_safety_sandbox.eval.policies import load_twin, safety_modules
   from robot_safety_sandbox.filtered_env import FilteredTensorEnv
 
-  if not args.porl_twin:
-    return FilteredTensorEnv(env)
-  model, norm = load_twin(args.porl_twin, args.device)
+  model, norm = load_twin(policy, args.device)
   mods = safety_modules(model, env.num_envs, args.device)
   mods["norm"] = norm
   bundle = build_filter(
-    args.porl_filter, mods, _FilterEnvView(env, args.task),
-    switch=SwitchCfg(eps=args.porl_eps, smoothing=args.porl_smoothing))
+    sf.get("filter", "critic"), mods, _FilterEnvView(env, args.task),
+    switch=SwitchCfg(eps=float(sf.get("eps", 0.0)),
+                     smoothing=bool(sf.get("smoothing", False))))
   return FilteredTensorEnv(env, bundle.filt, norm=norm)
 
 
@@ -139,32 +140,32 @@ def main():
                  help="tiny-budget verification: shrink learning_starts / eval "
                       "cadence / leaderboard sizes so a short run exercises every "
                       "code path (compose, gamma anneal, eval, leaderboard).")
-  # --- PORL: train the task policy INSIDE a safety filter -------------------
-  # Two arms, one code path. --porl alone is the CONTROL (unfiltered, counted);
-  # --porl + --porl-twin is the TREATMENT (filtered, executed action stored).
-  # Sharing the wrapper is deliberate: if the arms counted failures differently
-  # the headline plot would be measuring the instrumentation.
-  p.add_argument("--porl", action="store_true",
-                 help="PORL run: wrap the training env so failures/episodes/"
-                      "margins are counted into env/porl_* (both arms)")
-  p.add_argument("--porl-twin", default=None, metavar="ZIP",
-                 help="the fallback twin's checkpoint. Given -> FILTERED arm: "
-                      "every proposed action is certified by the filter and the "
-                      "EXECUTED action is what enters the replay buffer. "
-                      "Omitted -> control arm.")
-  p.add_argument("--porl-filter", default="critic",
-                 choices=["value", "critic", "qcbf"],
-                 help="which composition to train inside (default: critic = "
-                      "Safety Critic Filter, Q(s,u_nom) from a SAC twin). The "
-                      "rollout/gameplay monitors are deliberately not offered: "
-                      "a shadow sim inside the training loop is a separate "
-                      "design question, not a flag.")
-  p.add_argument("--porl-eps", type=float, default=0.0,
-                 help="switching threshold: hand over when the monitored "
-                      "margin <= eps (pick it with the epsilon sweep)")
-  p.add_argument("--porl-smoothing", action="store_true",
-                 help="use HeuristicSmoothingIntervention instead of the "
-                      "canonical switch (see examples/eval.py --smoothing)")
+  # --- train the task policy INSIDE a safety filter -------------------------
+  # This is config-driven, not argparse: a `safety_filter:` block in the YAML
+  # (schema in examples/_run_config.py, worked example in
+  # configs/go2_walker_filtered.yaml, background in docs/safety-filter-training.md)
+  # selects the FILTERED (treatment) arm when it carries a `safety_policy`; its
+  # absence is the unfiltered (control) arm. Both arms count failures via the
+  # base env's always-on safety/* counters, one shared accounting path -- so if
+  # the arms counted differently the headline plot would be measuring the
+  # instrumentation. `--safety-filter KEY=VAL` (repeatable) overrides the block
+  # one key at a time, mirroring `--env-override`.
+  p.add_argument("--run-suffix", default=None, metavar="STR",
+                 help="appended to the run tag, which names BOTH the output "
+                      "directory and the wandb run. Use it for every cell of a "
+                      "sweep: without it, cells sharing task+learner+arm "
+                      "overwrite each other's run dir and appear in wandb under "
+                      "one indistinguishable name.")
+  p.add_argument("--safety-filter", dest="safety_filter_override",
+                 action="append", metavar="KEY=VAL", default=None,
+                 help="override one key of the `safety_filter:` config block "
+                      "(repeatable), e.g. --safety-filter eps=0.1 "
+                      "--safety-filter safety_policy=runs/twin/final_model.zip. "
+                      "Keys: safety_policy (twin checkpoint; present -> filtered "
+                      "arm, absent -> control), filter {value,critic,qcbf}, eps, "
+                      "smoothing. The rollout/gameplay monitors are deliberately "
+                      "not offered: a shadow sim inside the training loop is a "
+                      "separate design question.")
   # --- net arch (mirror train.py's --net; qf kept on its reference default) ---
   p.add_argument("--net", default="256,256,256",
                  help="comma-separated hidden dims for the pi (actor) net "
@@ -290,12 +291,20 @@ def main():
   print(f"[algo] {args.task} adversary={two_player} -> {sac_name} "
         f"(reach_avoid={reach_avoid})")
 
-  # The two PORL arms share task AND learner, so the arm has to be in the tag or
-  # they would overwrite each other's run directory and wandb run.
-  arm = ""
-  if args.porl:
-    arm = f"_porl_{'filtered' if args.porl_twin else 'bare'}"
+  # The filtered (treatment) and unfiltered (control) arms share task AND
+  # learner, so the arm has to be in the tag or they would overwrite each
+  # other's run directory and wandb run. The filtered arm gets a "_filtered"
+  # marker; the control arm is a plain run (distinguish A/B cells with
+  # --run-suffix).
+  filtered_arm = bool((args.safety_filter or {}).get("safety_policy"))
+  arm = "_filtered" if filtered_arm else ""
+  # A hyperparameter SWEEP runs the same task+learner+arm many times, so without
+  # --run-suffix every cell lands on the same tag: same run directory (they
+  # clobber) and, worse, the same wandb run NAME, since both trainers hardcode
+  # wandb.init(name=tag) and ignore WANDB_NAME. Distinguishing cells by config
+  # alone makes a sweep unreadable in the UI.
   tag = (f"{args.task}_{sac_name.lower()}{arm}"
+         + (f"_{args.run_suffix}" if args.run_suffix else "")
          + ("_smoke" if args.smoke else ""))
   outdir = os.path.join(args.out, tag)
   os.makedirs(outdir, exist_ok=True)
@@ -305,7 +314,7 @@ def main():
   env = make_tensor(args.task, args.num_envs, args.device,
                     adversary=two_player, end_criterion=args.end_criterion,
                     cfg_overrides=args.env_overrides)
-  env = _wrap_filtered(env, args)
+  env = _wrap_safety_filter(env, args)
   eff_ec = args.end_criterion if args.end_criterion is not None else s.end_criterion
   print(f"[end-criterion] {args.task} -> {eff_ec}"
         f"{' (override)' if args.end_criterion is not None else ' (task default)'}")
@@ -427,7 +436,8 @@ def main():
     # SafeSuccessRateEvalCallback reads safe/success off (g, l). On a cumulative
     # task the learner's g slot IS the dense reward, so those rates would be
     # arithmetic on rewards wearing safety names. The run's quality signal is
-    # rollout/ep_rew_mean, and its SAFETY signal is env/porl_* from the wrapper.
+    # rollout/ep_rew_mean, and its SAFETY signal is the base env's safety/*
+    # counters (dense_margins tasks report a real margin there).
     print("[eval] safe/success-rate eval SKIPPED: meaningless on a "
           f"mode={CUMULATIVE!r} task (g is the dense reward, not a margin)")
   elif args.eval_freq > 0:
@@ -497,12 +507,13 @@ def main():
         nfiles = len(os.listdir(lbdir)) if os.path.isdir(lbdir) else 0
         print(f"[smoke] leaderboard: {len(lb.ctrl_steps)} ctrl / "
               f"{len(lb.dstb_steps)} dstb archived; {nfiles} files in {lbdir}")
-    if args.porl:
-      m = env.metrics()
-      print("[smoke] porl counters: "
-            + str({k: round(v, 4) for k, v in m.items()
-                   if k.startswith("porl/")}))
-      # The contract the whole experiment rests on: the learner must be able to
+    # The always-on training-safety counters (every run reports these).
+    m = env.metrics()
+    print("[smoke] safety counters: "
+          + str({k: round(v, 4) for k, v in m.items()
+                 if k.startswith("safety/")}))
+    if filtered_arm:
+      # The contract the filtered arm rests on: the learner must be able to
       # SEE the executed action through the normalizer wrapper. If this reports
       # None, the filter is running but the buffer is storing proposals.
       seen = getattr(model.env, "executed_action", None)

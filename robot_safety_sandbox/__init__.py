@@ -18,7 +18,7 @@ from .tasks import go2_gap as _go2_gap
 from .tasks import go2_stabilize as _go2_stabilize
 from .tasks import go2_crawl_twins as _go2_crawl_twins
 from .tasks import go2_gap_brake_or_jump as _go2_gap_brake_or_jump
-from .tasks import go2_porl as _go2_porl
+from .tasks import go2_filtered as _go2_filtered
 from .tasks import go2_low_bar as _go2_low_bar
 from .tasks import go2_tunnel as _go2_tunnel
 from .tasks import car_goal as _car_goal
@@ -31,7 +31,7 @@ _go2_stabilize.register_all()
 _digit_safety.register_all()
 _go2_crawl_twins.register_all()
 _go2_gap_brake_or_jump.register_all()  # split test: harvested-state RA vs avoid twins
-_go2_porl.register_all()  # PORL: velocity walker trained inside a safety filter
+_go2_filtered.register_all()  # velocity walker trained inside a safety filter (PORL)
 _go2_low_bar.register_all()  # 2nd RA-liveness benchmark: virtual low-bar crawl twins
 _go2_tunnel.register_all()  # crawl campaign new formulation: uniform randomized tunnel twins
 _car_goal.register_all()  # bicycle5d analog: diff-drive car reach-avoid (tutorial)

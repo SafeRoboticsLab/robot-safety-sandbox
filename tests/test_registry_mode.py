@@ -230,7 +230,17 @@ def test_every_registered_task_resolves():
   for t in tasks:
     s = registry.spec(t)
     assert s.mode in MODES, t
-    assert (s.margin_fn is not None) == (s.mode != CUMULATIVE), t
+    # A non-cumulative task ALWAYS needs margins. A cumulative one normally has
+    # none -- except in the dense_margins mode, where the reward stays the env's
+    # dense stack while (g, l) are computed alongside it for a train-time safety
+    # filter and its failure counters (see base.margin_probe_hook and the
+    # go2_walker_filtered task). So the invariant is conditional, not absolute.
+    if s.mode != CUMULATIVE:
+      assert s.margin_fn is not None, t
+    elif s.margin_fn is not None:
+      assert s.kwargs.get("dense_margins"), (
+        f"{t}: mode='cumulative' with a margin_fn but no dense_margins -- the "
+        "margins would never be computed, so the margin_fn is dead code")
     for family, (solo, duo) in _EXPECTED[s.mode].items():
       assert algo_name(t, family=family) == solo, (t, family)
       if s.supports_adversary and s.mode != CUMULATIVE:

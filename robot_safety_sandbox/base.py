@@ -228,6 +228,13 @@ class _MjlabCore:
     self.dense_margins = bool(dense_margins) and self.dense_reward
     self._safety_g = None
     self._safety_l = None
+    # Training-safety counters (drained through metrics() -> safety/* logging).
+    # This is a safety codebase, so EVERY training env reports how often it
+    # fails DURING training -- no flag, no wrapper. ``_failures_total`` is
+    # cumulative over the whole run (the headline y axis); the rest are window
+    # counters zeroed on each drain. See _count_step / _drain_counts / metrics.
+    self._failures_total = 0
+    self._zero_counts()
     self.render_mode = render_mode
     self.mj = ManagerBasedRlEnv(
       cfg=build_task_cfg(cfg_builder, margin_fn, num_envs, dense=dense_reward,
@@ -367,6 +374,13 @@ class _MjlabCore:
     # is the step's own return, kept here for callers that do not consume it
     # (see MjlabTensorSafetyEnv.step_tensor's collapsed dones/timeouts).
     self._last_terminated, self._last_truncated = terminated, truncated
+    # Always-on training-safety accounting. The margin is the task's g: the
+    # returned reward-slot on a safety/reach-avoid env, the alongside-computed
+    # _safety_g on a dense-reward+margins env, and absent on a plain cumulative
+    # env (which has no margin to report).
+    count_g = (self._safety_g if self.dense_margins
+               else (None if self.dense_reward else g))
+    self._count_step(terminated, truncated, count_g)
     log = extras.get("log", {})
     for k, v in log.items():
       try:
@@ -400,8 +414,57 @@ class _MjlabCore:
       raise RuntimeError("safety_margins() called before the first step")
     return self._safety_g, self._safety_l
 
+  # --- training-safety counters (always on; drained via metrics) -------------
+
+  def _zero_counts(self) -> None:
+    """Reset the WINDOW counters. ``_failures_total`` is cumulative over the
+    whole run and is never zeroed here."""
+    self._c_steps = 0
+    self._c_failures = 0
+    self._c_episodes = 0
+    self._c_g_sum = 0.0
+    self._c_g_min = float("inf")
+
+  def _count_step(self, terminated, truncated, margin_g) -> None:
+    """Fold one step into the training-safety counters. A failure is a real
+    termination (NOT a timeout); ``margin_g`` is None when the env computes no
+    task margin (a plain cumulative env)."""
+    dones = terminated | truncated
+    timeouts = truncated & ~terminated
+    failed = dones & ~timeouts
+    n_failed = int(failed.sum())
+    self._c_steps += int(terminated.numel())
+    self._c_failures += n_failed
+    self._failures_total += n_failed
+    self._c_episodes += int(dones.sum())
+    if margin_g is not None:
+      self._c_g_sum += float(margin_g.sum())
+      self._c_g_min = min(self._c_g_min, float(margin_g.min()))
+
+  def _drain_counts(self) -> dict[str, float]:
+    """The training-safety counters as safety/* metrics, then reset the window.
+
+      safety/failures_total   cumulative real terminations (NOT timeouts)
+      safety/failures_per_1k  the same, per 1000 env-steps in the window
+      safety/failure_rate     fraction of episodes this window ending in failure
+      safety/episodes         episodes ended this window
+      safety/margin_mean/_min the task margin g (only when the env computes one)
+    """
+    out = {"safety/failures_total": float(self._failures_total)}
+    if self._c_steps:
+      out["safety/failures_per_1k"] = 1000.0 * self._c_failures / self._c_steps
+      out["safety/failure_rate"] = (self._c_failures / self._c_episodes
+                                    if self._c_episodes else 0.0)
+      out["safety/episodes"] = float(self._c_episodes)
+      if self._c_g_min != float("inf"):
+        out["safety/margin_mean"] = self._c_g_sum / self._c_steps
+        out["safety/margin_min"] = self._c_g_min
+    self._zero_counts()
+    return out
+
   def metrics(self) -> dict[str, float]:
     out, self._log = self._log, {}
+    out.update(self._drain_counts())
     return out
 
   def render(self):

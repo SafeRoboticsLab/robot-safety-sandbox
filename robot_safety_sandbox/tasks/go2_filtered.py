@@ -7,7 +7,7 @@ rate or slightly faster (fewer catastrophic transitions wasted), while making
 near-zero failures DURING training -- and is then very safe when deployed under
 the same filter.
 
-Both arms train the SAME task, ``go2_walker_porl``. The only difference is
+Both arms train the SAME task, ``go2_walker_filtered``. The only difference is
 whether the env is wrapped by
 :class:`~robot_safety_sandbox.filtered_env.FilteredTensorEnv`; nothing about
 the task, the reward, the learner or the hyperparameters changes between them,
@@ -50,7 +50,7 @@ def register_all() -> None:
     go2_locomote_env_cfg, stance_margins)
 
   register(TaskSpec(
-    task_id="go2_walker_porl",
+    task_id="go2_walker_filtered",
     cfg_builder=partial(go2_locomote_env_cfg, cmd_vx=CMD_VX),
     margin_fn=stance_margins,
     mode=CUMULATIVE,

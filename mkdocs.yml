@@ -63,6 +63,7 @@ nav:
   - Installation: installation.md
   - "Tutorial: your first env": tutorial-car-goal.md
   - API guide: API.md
+  - Training inside a safety filter: safety-filter-training.md
   - Environments:
       - Overview: environments/index.md
       - Go2 gap-jumping: environments/go2-gap.md
