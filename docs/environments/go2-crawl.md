@@ -8,6 +8,14 @@ sidesteps the co-adaptation wall.
 
 ![go2 crawl rollout](assets/go2_crawl.png){ width="520" }
 
+!!! warning "Experimental — a folded thread"
+    The crawl / low-bar / tunnel line is **shelved**: a model-free reach-avoid
+    *executor* hit a ~0.3 success ceiling on sustained crawling (a sustained
+    crouch-crawl is a harder problem than the one-decision gap *jump*). The
+    environments below remain registered for reference but are **not** recommended
+    entry points and may not reproduce a clean result. The negative finding — and
+    the filter-as-gate pivot for resuming it — is preserved in the project record.
+
 ## Tasks
 
 | task | objective | learner |

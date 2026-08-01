@@ -333,7 +333,7 @@ register(TaskSpec(
 (`g ≥ 0 ∧ l ≥ 0`) as well as on collision. For a "drive there and stop" task this
 is the natural choice — reaching the goal *is* success. (The alternative,
 `"failure"`, keeps going after arrival so the value can climb *deeper* into the
-target; see the [API guide](API.md#4-end_criterion-when-the-episode-ends).)
+target; see [termination](concepts/termination.md).)
 
 Finally, wire the registration into the package so it loads on import:
 

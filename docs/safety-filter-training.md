@@ -29,6 +29,37 @@ Both arms count failures the same way through one shared accounting path (see
 [Failure counting is always on](#failure-counting-is-always-on)), so the
 headline plot measures the policies, not the instrumentation.
 
+## Result: the Go2 velocity walker
+
+We ran both arms on `go2_walker_filtered` (a Go2 velocity walker; `filter: critic`
+built from a `go2_stabilize` `ReachAvoidSAC2P` fallback), seed 0, capping the
+comparison at 20M env-steps — the point where both arms plateau.
+
+![Training a Go2 walking policy in a filtered vs. unfiltered environment](assets/porl/failures_vs_return.png)
+
+- **Training-time safety — the headline.** By 20M steps the unfiltered arm had
+  accumulated **6,056** catastrophic training failures (`safety/failures_total`);
+  the filtered arm had **33** — a **~180× reduction**. The filtered curve is flat
+  near zero from the first step: the fallback catches unsafe proposals before they
+  become terminations, so the policy essentially never falls during training.
+- **No task-performance tax.** The two arms reach **comparable return**
+  (`ep_rew_mean` ≈ 35 filtered vs ≈ 37 unfiltered at the cap; the rolling ±1σ
+  bands overlap throughout and trade the lead). Training inside the filter did
+  **not** slow learning or cap the achievable return — it removed the failures for
+  free.
+- **The policy weans off the fallback.** `safety/engaged_frac` — the fraction of
+  steps the fallback actually drove — starts around **0.21** and falls to **~0.10**
+  by 20M as the task policy learns to stay safe on its own.
+
+This is the PORL claim made concrete: a policy trained inside a safety filter
+reaches the same performance as one trained bare while making orders of magnitude
+fewer failures along the way.
+
+!!! note "Scope of this result"
+    Single seed (seed 0), compared at a 20M-step cap; the return band is a rolling
+    mean ± 1σ over the (noisy) single run. It demonstrates the failures-vs-return
+    trade cleanly but is not a multi-seed benchmark.
+
 ## The config path (recommended)
 
 Add a `safety_filter:` block to a training config and run it through

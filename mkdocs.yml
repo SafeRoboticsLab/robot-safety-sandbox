@@ -57,19 +57,43 @@ markdown_extensions:
   - toc: { permalink: true }
   - pymdownx.snippets: { base_path: [.] }   # include root README/INSTALL/PORTING
   - pymdownx.arithmatex: { generic: true }   # $...$ / $$...$$ via MathJax
+  - pymdownx.emoji:                          # render :material-*: icon shortcodes as SVG
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 nav:
-  - Home: index.md
-  - Installation: installation.md
-  - "Tutorial: your first env": tutorial-car-goal.md
-  - API guide: API.md
-  - Training inside a safety filter: safety-filter-training.md
+  - Overview:
+      - What is Robot Safety Sandbox?: index.md
+      - Features and limitations: overview/features.md
+      - Release notes: release-notes.md
+  - Getting started:
+      - Requirements: getting-started/requirements.md
+      - Installation: installation.md
+      - Quick start: getting-started/quickstart.md
+      - Troubleshooting: getting-started/troubleshooting.md
+  - User guide:
+      - Choose a workflow: guide/workflows.md
+      - Training: guide/training.md
+      - Evaluation: guide/evaluation.md
+      - Train inside a safety filter: safety-filter-training.md
   - Environments:
-      - Overview: environments/index.md
+      - Catalog: environments/index.md
+      - Go2 stabilize and locomotion: environments/go2-stabilize.md
       - Go2 gap-jumping: environments/go2-gap.md
-      - Go2 crawl: environments/go2-crawl.md
+      - Go2 crawl (experimental): environments/go2-crawl.md
       - Digit stabilize: environments/digit.md
-  - Code reference: reference.md
-  - Extending: EXTENDING.md
-  - Porting a task: porting.md
-  - Release notes: release-notes.md
+  - Tutorials:
+      - Build the car-goal task: tutorial-car-goal.md
+  - Concepts:
+      - Safety and reach-avoid margins: concepts/margins.md
+      - The MAP naming convention: concepts/map.md
+      - Episode termination: concepts/termination.md
+      - Safety-filter architecture: concepts/filters.md
+  - Reference:
+      - API guide: API.md
+      - Task registry and Python API: reference/registry.md
+      - Code reference: reference.md
+      - Command-line reference: reference/cli.md
+  - Development:
+      - Extending the package: EXTENDING.md
+      - Porting a task: porting.md

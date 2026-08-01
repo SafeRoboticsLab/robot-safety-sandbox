@@ -8,6 +8,22 @@ filtering livelocks and reach-avoid is needed.
 
 ![go2 gap rollout](assets/go2_gap_crossing.gif){ width="520" }
 
+## Status and requirements
+
+| | |
+|---|---|
+| Maturity | **Research** (a shipped result; forms only through staged warm-starts at real scale) |
+| Requires | stock mjlab sim stack; NVIDIA GPU |
+| Adversary | `go2_gap_chain_isaacs` (`--adversary` → `ReachAvoidPPO2P`) |
+| Action | 12 joint targets (`ctrl_dim=12`); adversary = 3-dim base wrench |
+| Training budget | large — the chain forms its jump only near ~2B env-steps; watch the `env/Curriculum/*` logger keys |
+
+**Success / failure.** Failure (`g < 0`) is a fall or stalling airborne over the
+pit; success (`l ≥ 0`) is arriving past the gap at a stable stop on the far
+platform. The jump is a *committed* maneuver — once airborne over the pit, braking
+is fatal — which is exactly where avoid-only filtering livelocks and reach-avoid is
+needed.
+
 ## The pipeline
 
 The jump does not emerge from scratch — it forms through staged warm-starts
@@ -89,7 +105,7 @@ python examples/eval_brake_or_jump_value.py --task go2_gap_brake_or_jump_ra_w30 
     --ra-model runs/<ra_run>/final_model.zip --avoid-model runs/<avoid_run>
 # the live safety filter: the blind walker approaching the gap, filtered
 python examples/eval.py --preset gap_gauntlet --task go2_gap_brake_or_jump_ra_w30 \
-    --twin runs/<ra_run>/final_model.zip --nominal runs/go2_walker_flat/final_model.zip \
+    --safety-policy runs/<ra_run>/final_model.zip --task-policy runs/go2_walker_flat/final_model.zip \
     --spawn-x -0.8 -0.8 --cmd-vx 0.85 --island-length 3.0 --gap-full-pose \
     --gap-x 0.0 --rest-x 1.2 --num-envs 6 --video ra.mp4
 ```
@@ -103,3 +119,24 @@ env = make_tensor("go2_gap_chain", num_envs=2048)     # ~50k steps/s on 12 GB
 The gap family forms its jump only at real scale (~2B env-steps for the chain);
 watch the `env/Curriculum/*` logger keys — a stalled curriculum looks exactly
 like converged training in the reward curve.
+
+## Visualize
+
+```bash
+python examples/play.py --task go2_gap_chain --algo ReachAvoidPPO1P --run runs/go2_gap_chain
+```
+
+## Known limitations
+
+- The shipped result ran at reduced scale (1024 envs, not 2048); a scale-matched
+  rerun is the outstanding validation for a paper figure.
+- The jump depends on the staged warm-start pipeline — training `go2_gap_chain`
+  from scratch does not form it.
+- Evaluation is not bit-reproducible; compare configurations over several runs.
+
+## Related source files
+
+- `robot_safety_sandbox/tasks/go2_gap.py`, `robot_safety_sandbox/tasks/go2_gap_brake_or_jump.py` — task registrations.
+- `robot_safety_sandbox/envs/go2_gap/` — env cfgs, the harvest/replay pipeline, and margins.
+- `robot_safety_sandbox/envs/go2_gap/eval_gauntlet.py` — the `gap_gauntlet` eval preset.
+- `examples/eval_brake_or_jump_value.py` — the critic value-ordering probe.
