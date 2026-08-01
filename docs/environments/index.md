@@ -1,8 +1,8 @@
 # Environments
 
 The mjlab / GPU robot benchmark environments that ship with `robot_safety_sandbox`
-— reach-avoid and avoid-only, single-agent and adversarial (ISAACS), on GPU
-end-to-end. Each is a `TaskSpec` in the [registry](../API.md#3-registry-api);
+— reach-avoid and avoid-only, single-agent and adversarial (ISAACS), end to end
+on GPU. Each is a `TaskSpec` in the [registry](../API.md#3-registry-api-and-the-map);
 `make_tensor("<id>")` builds it for a `safety_sb3` learner.
 
 For the small **CPU reference environments** (bicycle, pendulum, …) that ship
@@ -50,7 +50,7 @@ with the algorithm layer, see the
 </div>
 
 Learner names follow the MAP — **M**ode + **A**lgorithm + **P**layers (see the
-[API guide](../API.md#3-registry-api--and-the-map)). The names shown are the
+[API guide](../API.md#3-registry-api-and-the-map)). The names shown are the
 on-policy family; swap `PPO`→`SAC` for `--family off_policy`.
 
 Each page follows the same shape: what the task is, its `g`/`l` margin design,

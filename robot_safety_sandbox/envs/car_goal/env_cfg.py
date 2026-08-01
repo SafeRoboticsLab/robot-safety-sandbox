@@ -138,7 +138,8 @@ def _fix_wheel_actuators(spec) -> None:
 
 # --- env cfg builder -----------------------------------------------------------
 
-def car_goal_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+def car_goal_env_cfg(play: bool = False,
+                     episode_length_s: float = 12.0) -> ManagerBasedRlEnvCfg:
   obs_terms = {
     "root_vel": ObservationTermCfg(func=obs_root_vel),
     "goal": ObservationTermCfg(func=obs_goal_car),
@@ -183,9 +184,12 @@ def car_goal_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   return ManagerBasedRlEnvCfg(
     decimation=4,
-    episode_length_s=12.0,   # 600 control steps @ dt 0.02: ample time to weave
-                            # to the 2 m goal at ~1.5 m/s (goal was unreachable at
-                            # 3 m / 8 s -- see START_TO_GOAL / _WHEEL_SPEED)
+    episode_length_s=episode_length_s,  # 12 s = 600 control steps @ dt 0.02:
+                            # time to weave to the 2 m goal at ~1.5 m/s (goal was
+                            # unreachable at 3 m / 8 s -- see START_TO_GOAL /
+                            # _WHEEL_SPEED). Overridable: at gamma=0.999 the car
+                            # takes a longer safe detour, so a 20 s horizon lets
+                            # more episodes finish the reach (car_goal E064).
     scene=SceneCfg(
       num_envs=1,
       env_spacing=2.0,

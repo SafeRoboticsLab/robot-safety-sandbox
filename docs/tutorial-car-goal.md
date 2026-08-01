@@ -71,7 +71,7 @@ Everything below is just *supplying `g` and `l` honestly* for one small robot.
 **Files:** `envs/assets/car/xmls/car.xml`, `envs/assets/car/car_constants.py`
 
 A task needs a body. We copied a minimal differential-drive car MJCF — a chassis
-on a free joint, two independently-driven wheels (`left`, `right`), and a passive
+on a free joint, two independently driven wheels (`left`, `right`), and a passive
 caster — and wrapped it the way every robot in this repo is wrapped: a `get_spec`
 that loads the MJCF, and an `EntityCfg` that tells mjlab how to actuate it.
 
@@ -211,7 +211,7 @@ entire control interface, and it is why `ctrl_dim = 2` in the task spec (§5).
     "velocity_range": {}})     # empty -> zero initial velocity -> starts from REST
 ```
 
-Small position + heading jitter each episode is the anti-memorization pressure
+Small position and heading jitter in each episode provide anti-memorization pressure
 (combined with the egocentric obs, it teaches a *reactive* policy). The empty
 velocity range keeps the standstill start from §1 — the property that makes the
 reach-avoid-vs-avoid contrast meaningful.
@@ -391,14 +391,28 @@ for exact reproduction.
 
 ```yaml
 # configs/car_goal.yaml
+family: on_policy        # PPO family
 task: car_goal
 num_envs: 1024
 steps: 25_000_000
 seed: 0
 net: "256,256"
 ent_coef: 0.003
+lr: 0.0005
+adaptive_lr: true        # KL-adaptive LR (desired_kl 0.01)
+gamma: 0.99              # base discount...
+gamma_anneal: true       # ...annealed 0.99 -> 0.999 -> 0.9999 over training
 video_interval: 2_000_000
 ```
+
+!!! note "Why the discount is annealed"
+    The `gamma_anneal` is **load-bearing** for this task. The reach-avoid value is
+    a Hamilton–Jacobi value; annealing `γ` toward 1 recovers the true (undiscounted)
+    reachability value, which is what lets the policy plan the long weave through the
+    slalom *from a standstill* rather than lunging at the goal. Training with a fixed
+    low `γ` reaches far less reliably. (The value's `explained_variance` dips late as
+    `γ→0.9999` makes the near-undiscounted target harder to fit — that is expected and
+    does **not** mean the policy is worse.)
 
 Launch it:
 
@@ -423,11 +437,23 @@ env = make_tensor("car_goal", num_envs=1024)      # GPU-resident tensor path
 
 ## 8. The result
 
-At `25M` env-steps the trained policy reaches the goal on the large majority of
-randomized spawns, weaving through the slalom from a standstill without entering a
-keep-out region — the rollout in the GIF at the top, and the path in the margin
-diagram in §4. A pure avoid policy on the same env sits at ≈ 0 % reach: the
-contrast is the point.
+At `25M` env-steps the trained policy drives to the goal from a standstill,
+weaving through the slalom without entering a keep-out region — the rollout in the
+GIF at the top, and the path in the margin diagram in §4. On a held-out sweep of
+512 randomized spawns, the canonical run (`seed 0`) reaches **≈67%** of them with
+**0% constraint violations** (it never touches the obstacle boundary); across
+seeds, the reach rate averages **≈60%**, with a single-digit violation rate. A pure
+*avoid* policy on the same env sits at ≈0% reach — it stays safe by never
+setting off — so the reach rate is exactly what separates a real reach-avoid
+policy from a lazy one.
+
+!!! tip "Measuring it yourself"
+    ```bash
+    python examples/eval.py --task car_goal \
+        --safety-policy runs/car_goal/final_model.zip --safety-only \
+        --no-filter --num-envs 512 --steps 700
+    ```
+    reports `task_success` (reach rate), `safe_rate`, and `violation_rate`.
 
 You have now built, from nothing, a complete safety task and trained a certified
 reach-avoid policy on it. Every robot in the [environments showreel](environments/index.md)

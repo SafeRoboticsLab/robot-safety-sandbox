@@ -1,7 +1,7 @@
 # Extending the sandbox
 
-Everything in the sandbox is a plain-python dataclass config plus small torch
-functions — no YAML layer, no hydra. To add a task you write (1) an env cfg
+Everything in the sandbox is a plain Python dataclass config plus small Torch
+functions — no YAML layer, no Hydra. To add a task, you write (1) an env cfg
 builder, (2) a margin function, (3) a `TaskSpec` registration; each part is a
 few dozen lines patterned on an existing task. This guide walks the four
 extension axes with worked examples taken from the shipped tasks.
@@ -63,6 +63,7 @@ def l_at_rest_past(env, x_goal=5.0):
 
 Conventions that matter (each was learned the hard way — see
 safety-stable-baselines/BEST_PRACTICES.md):
+
 - **min = AND, max = OR** for combining conditions inside one margin.
 - **Normalize every term to O(1)**; the l/g magnitude ratio is the implicit
   risk-tolerance dial (break-even attempt probability = |g|/(|g|+l)).
@@ -121,7 +122,7 @@ class MyGapTerrainCfg(SubTerrainCfg):
 ```
 
 Wire it via the terrain generator's `sub_terrains` dict in your cfg builder.
-`difficulty` (0..1) is driven by the curriculum; pin it for eval by setting
+`difficulty` (0–1) is driven by the curriculum; pin it for eval by setting
 `gap_width_range=(w, w)` (see the `gap_gauntlet` eval preset in
 `envs/go2_gap/eval_gauntlet.py`). Curriculum
 promotion predicates must measure **composed task success** — promoting on

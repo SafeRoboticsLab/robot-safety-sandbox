@@ -17,11 +17,11 @@ and the learned value is the robust-invariance certificate.
 
 (Names are the on-policy family; `--family off_policy` gives the `*SAC*` cells —
 note `SafetyPPO2P` and `SafetySAC2P` are structurally different games, see the
-[API guide](../API.md#3-registry-api--and-the-map).)
+[API guide](../API.md#3-registry-api-and-the-map).)
 
 The avoid tasks are genuine two-player **avoid** games — with `--adversary` they
-resolve to `SafetyPPO2P` (no target set). They do **not** emulate
-avoid with a degenerate `l` (the retired `l_neg` pattern): avoid is not a
+resolve to `SafetyPPO2P` (no target set). They do **not** emulate an
+avoid task with a degenerate `l` (the retired `l_neg` pattern): avoid is not a
 reach-avoid instance — see the [API guide](../API.md#5-marginspy).
 
 ## Margins

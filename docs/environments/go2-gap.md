@@ -32,8 +32,9 @@ optimizer — and differ in exactly one variable: whether a reach term `l` is pr
 | `go2_gap_brake_or_jump_avoid` (`_w20`, `_w30`) | `SafetyPPO1P` | none (`compose(g)`) |
 | `go2_gap_brake_or_jump_ra` (`_w20`, `_w30`) | `ReachAvoidPPO1P` | `l_stable_far` (`compose(g, l)`) |
 
-`brake_or_jump_harvest.py` collects real jump states into a bank; `brake_or_jump.py` replays them
-on a reverse curriculum whose final level is a decision mixture (far+slow "runway",
+`brake_or_jump_harvest.py` collects real jump states into a bank;
+`brake_or_jump.py` replays them on a reverse curriculum whose final level is a
+decision mixture (far+slow "runway",
 near+fast "committed", near+slow "stoppable"). Widths `_w20`/`_w30` widen the gap
 (0.12 → 0.20 → 0.30 m) up a warm-started chain.
 
@@ -41,8 +42,8 @@ near+fast "committed", near+slow "stoppable"). Widths `_w20`/`_w30` widen the ga
 
 Under the corrected reach-avoid anchor (`min(l, g)`; see
 [release notes](https://github.com/SafeRoboticsLab/safety-stable-baselines)), the
-reach-avoid twin **initiates the crossing from a standstill** — 100 % crossing at
-every spawn momentum, at all three gap widths, with ~0–1 % falls — while the
+reach-avoid twin **initiates the crossing from a standstill** — 100% crossing at
+every spawn momentum, at all three gap widths, with ~0–1% falls — while the
 avoid twin (and a reach-avoid twin trained under the old `g`-anchor) stalls at low
 momentum and its critic over-certifies the non-crossing state. The value is *lower*
 but sound: every point of it is backed by a realized safe crossing.
@@ -79,7 +80,7 @@ python examples/train.py --family on_policy --task go2_gap_chain
 # + worst-case force adversary (two-player reach-avoid -> ReachAvoidPPO2P)
 python examples/train.py --family on_policy --task go2_gap_chain --adversary
 
-# split test: reach-avoid vs avoid twins, per gap width
+# split test: reach-avoid vs avoid twins, per-gap-width
 python examples/train.py --family on_policy --task go2_gap_brake_or_jump_ra   --load runs/go2_gap_crossing/final_model.zip
 python examples/train.py --family on_policy --task go2_gap_brake_or_jump_avoid --load runs/go2_gap_crossing/final_model.zip
 

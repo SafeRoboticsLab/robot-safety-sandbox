@@ -1,6 +1,6 @@
 # robot-safety-sandbox — API reference
 
-The canonical contract for the **environment layer**: tasks, margins, the
+This is the canonical contract for the **environment layer**: tasks, margins, the
 registry, and the two bridges to `safety_sb3`. The algorithm layer (learners,
 backups, `terminal_type`) is documented in
 [safety-stable-baselines `docs/API.md`](https://github.com/SafeRoboticsLab/safety-stable-baselines/blob/main/docs/API.md),
@@ -260,13 +260,13 @@ python examples/train.py --config configs/go2_stabilize_reachavoidsac2p.yaml --s
 - **Env/task overrides** — a config `env_overrides:` dict (or `--env-override KEY=VAL`,
   repeatable) forwards params to the task's `cfg_builder`, overriding values baked into
   its registration (e.g. `gate_close_rate`, `bar_clearance`) — so a recipe can define the
-  *environment* too, no argparse edit. An unaccepted key fails loud.
+  *environment* too, with no argparse edit. An unaccepted key fails loudly.
 
 The off-policy trainer exposes the reference-faithful controls (see safety_sb3
 [hyperparameters](https://saferoboticslab.github.io/safety-stable-baselines/hyperparameters/)):
 `--gamma-schedule` (discount anneal, default the discrete-jump schedule),
 `--min-alpha`, per-agent `--critic-lr/--dstb-lr/--ent-coef-lr/--dstb-ent-coef-lr`,
-`--eval-rollouts` (safe/success-rate to wandb), and **throughput** leaderboard
+`--eval-rollouts` (safe and success rates sent to wandb), and **throughput** leaderboard
 defaults (`--leaderboard-freq 2_000_000 --leaderboard-episodes 3` + an on-device
 tensor eval env — ~30× over the old settings at 1024 envs).
 

@@ -84,9 +84,11 @@ _CUMULATIVE_DEFAULTS = dict(
 # Knobs that only mean something for the SAFETY backups. In cumulative mode they
 # are REJECTED rather than silently ignored — several would quietly change the
 # objective (a gamma anneal toward 0.9999 is a safety-value trick, an l-anneal
-# reshapes a target set this mode does not have). NB there is no gamma knob in
-# this trainer at all (gamma is fixed 0.99 in both branches); the SAC trainer's
-# --gamma-* flags don't exist here, so a config carrying them is already
+# reshapes a target set this mode does not have). The base discount is settable
+# via --gamma (default 0.99, applied in both branches); on reach-avoid a higher
+# fixed gamma (0.999) lengthens the value's planning horizon so the policy takes
+# a safe detour rather than rushing the target (car_goal E064). The SAC trainer's
+# --gamma-* schedule flags don't exist here, so a config carrying them is already
 # rejected by merge_config's key validation.
 _SAFETY_ONLY = (
   "adversary", "terminal_type", "end_criterion", "l_anneal_steps",
@@ -145,13 +147,13 @@ def _train_cumulative(args, outdir):
   else:
     model = PPO(
       "MlpPolicy", env, n_steps=24, batch_size=args.num_envs * 24 // 4, n_epochs=5,
-      gamma=0.99, gae_lambda=0.95, learning_rate=args.lr, ent_coef=args.ent_coef,
+      gamma=args.gamma, gae_lambda=0.95, learning_rate=args.lr, ent_coef=args.ent_coef,
       vf_coef=args.vf_coef, clip_range=0.2, max_grad_norm=1.0,
       policy_kwargs=dict(log_std_init=math.log(0.5),
                          net_arch=dict(pi=net, vf=net)),
       seed=args.seed, verbose=1, device=args.device, tensorboard_log=outdir)
   print(f"[recipe] net={net} ent_coef={args.ent_coef} lr={args.lr} "
-        f"vf_coef={args.vf_coef} (stock PPO: no adaptive LR, gamma=0.99)")
+        f"vf_coef={args.vf_coef} (stock PPO: no adaptive LR, gamma={args.gamma})")
   if args.load_tensornorm:
     st = th.load(args.load_tensornorm, map_location="cpu", weights_only=True)
     env.obs_rms.mean = st["obs_mean"].numpy().astype("float64")
@@ -292,6 +294,16 @@ def main():
   p.add_argument("--adaptive-lr", action=argparse.BooleanOptionalAction,
                  default=True, help="KL-adaptive LR (locomotion); use "
                  "--no-adaptive-lr for a fixed LR on safety tasks")
+  p.add_argument("--gamma", type=float, default=0.99,
+                 help="base discount (both branches). On reach-avoid a higher "
+                      "fixed gamma (0.999) lengthens the value's planning horizon "
+                      "so the policy detours safely instead of rushing the target "
+                      "and clipping obstacles (car_goal E064). Distinct from "
+                      "--gamma-anneal (a schedule, OFF on PPO).")
+  p.add_argument("--gamma-anneal", action=argparse.BooleanOptionalAction,
+                 default=False, help="anneal the discount 0.99->0.9999 (an HJ/SAC "
+                 "safety-value device; OFF for on-policy PPO — it destabilizes the "
+                 "GAE value. Set `gamma_anneal: true` in the config to enable).")
   p.add_argument("--desired-kl", type=float, default=0.01,
                  help="KL target for the adaptive LR. Tight values (0.01) can "
                       "death-spiral the LR to 0 (frozen policy); loosen to "
@@ -401,7 +413,12 @@ def main():
   model = Algo(
     "MlpPolicy", env, **akw,
     n_steps=48, batch_size=args.num_envs * 48 // 4, n_epochs=5,
-    gamma=0.99, gae_lambda=0.95, learning_rate=args.lr,
+    gamma=args.gamma, gae_lambda=0.95, learning_rate=args.lr,
+    # gamma anneal (-> 0.9999) is an HJ/SAC safety-VALUE device; on PPO's GAE
+    # value it makes the target near-undiscounted and the value net can diverge
+    # (car_goal E064: value_loss -> 1e5, EV < 0 once gamma reached ~1). Default
+    # OFF on the on-policy path; set `gamma_anneal: true` in the config to enable.
+    gamma_anneal=args.gamma_anneal,
     ent_coef=args.ent_coef, vf_coef=args.vf_coef, clip_range=0.2,
     max_grad_norm=1.0, normalize_obs=True,
     adaptive_lr=args.adaptive_lr,

@@ -259,7 +259,7 @@ class PerEnvForceScaleCallback(BaseCallback):
     failed = d & ~timeouts.bool()
     self._scale += self.step * survived.float() - self.step * failed.float()
     self._scale.clamp_(self.lo, self.hi)
-    self.logger.record("isaacs/force_scale_mean", float(self._scale.mean()))
+    self.logger.record("game/force_scale_mean", float(self._scale.mean()))
     return True
 
 

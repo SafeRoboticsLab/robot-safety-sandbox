@@ -25,7 +25,7 @@ The experiment is an A/B with a shared code path:
   Off-policy learning makes the substitution exactly correct with no importance
   correction, which is why filtered training is run with **SAC**.
 
-Both arms count failures the same way, off one shared accounting path (see
+Both arms count failures the same way through one shared accounting path (see
 [Failure counting is always on](#failure-counting-is-always-on)), so the
 headline plot measures the policies, not the instrumentation.
 

@@ -4,8 +4,8 @@ Parallelized **mjlab** environments for safety-policy synthesis, task-policy
 training, and safety-filter evaluation — the environment layer for
 [safety-stable-baselines](https://github.com/SafeRoboticsLab/safety-stable-baselines).
 
-Reach-avoid / avoid-only × single-player / zero-sum two-player, on GPU
-end-to-end, plus a `filters/` library in which a safety filter is a composition
+Reach-avoid / avoid-only × single-player / zero-sum two-player, end to end on
+GPU, plus a `filters/` library in which a safety filter is a composition
 of three swappable modules: fallback (pi^<) / monitor (Delta) / intervention (phi).
 
 ## The MAP
@@ -16,7 +16,7 @@ of three swappable modules: fallback (pi^<) / monitor (Delta) / intervention (ph
     A = Algorithm  PPO | SAC | A2C | DQN               the RL update rule
     P = Players    1P | 2P                             single-player | zero-sum
 
-Every learner is those three letters concatenated — `SafetyPPO1P`,
+Every learner name consists of those three letters concatenated — `SafetyPPO1P`,
 `ReachAvoidSAC2P` — and each letter has exactly one source: **M** is the task's
 `TaskSpec(mode=...)`, **A** is `train.py --family`, **P** is `--adversary`.
 `algo_name(task_id, adversary, family)` is that concatenation and nothing else.
@@ -24,7 +24,7 @@ Every learner is those three letters concatenated — `SafetyPPO1P`,
 Note `*PPO2P` and `*SAC2P` are different ALGORITHMS, not one game with two
 optimizers: `*SAC2P` is minimax on one shared joint-action critic
 `Q(s, [a_ctrl, a_dstb])`; `*PPO2P` is an alternating best-response approximation
-with two independent `V(s)` nets, two rollout buffers and a phase machine.
+with two independent `V(s)` nets, two rollout buffers, and a phase machine.
 See [the API guide](API.md).
 
 ## Start here

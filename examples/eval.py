@@ -1,24 +1,24 @@
-"""Evaluation entry point: pick an env, a filter, a nominal, an attack.
+"""Evaluation entry point: pick an env, a filter, a task policy, an attack.
 
 One script for every filter evaluation in this repo. The four axes are chosen
 independently on the command line and the harness composes them; nothing about
 any particular terrain lives here (see robot_safety_sandbox/eval/).
 
     --task / --preset / --env-override   WHICH WORLD
-    --nominal                            the pi_task being filtered
-    --twin  / --filter                   the certificate + which composition
+    --task-policy                        the pi_task being filtered
+    --safety-policy / --filter           the certificate + which composition
     --dstb  / --dstb-scale               WHO IS ATTACKING, and how hard
 
   # filter gauntlet on flat ground under a swept adversarial attack
   python examples/eval.py --task go2_locomote --adversary \
-      --nominal runs/go2_walker_flat/final_model.zip \
-      --twin runs/go2_stabilize_sac2p/final_model.zip \
+      --task-policy runs/go2_walker_flat/final_model.zip \
+      --safety-policy runs/go2_stabilize_sac2p/final_model.zip \
       --filter gameplay --dstb policy --dstb-scale 0.5 --num-envs 256
 
   # the gap gauntlet (E021), now a preset rather than its own script
   python examples/eval.py --preset gap_gauntlet \
-      --nominal runs/go2_walker_flat/final_model.zip \
-      --twin runs/go2_gap_chain_ra/final_model.zip \
+      --task-policy runs/go2_walker_flat/final_model.zip \
+      --safety-policy runs/go2_gap_chain_ra/final_model.zip \
       --filter value --gap-width 0.35 --n-gaps 1 --num-envs 256 --steps 600
 
   # the unfiltered control arm
@@ -85,37 +85,40 @@ def build_parser(pre_args):
   p.add_argument("--episode-s", type=float, default=None,
                  help="override the env's episode length (s)")
   p.add_argument("--cmd-vx", type=float, default=1.0,
-                 help="forward velocity command given to the nominal")
+                 help="forward velocity command given to the task policy")
   p.add_argument("--engaged-cmd-vx", type=float, default=1.0,
                  help="command held while the FALLBACK drives -- the value the "
-                      "twin was trained under (feeding it 0 is OOD)")
+                      "safety policy was trained under (feeding it 0 is OOD)")
   p.add_argument("--no-command-surgery", action="store_true",
                  help="do not drive the velocity command from the filter's "
                       "verdict (see eval/envs.py TwistCommandSurgery)")
   p.add_argument("--end-criterion", default=None,
                  choices=["failure", "reach-avoid", "timeout"])
   p.add_argument("--safety-obs-key", default=None,
-                 help="override the twin's obs group (default: auto-detected)")
-  p.add_argument("--nominal-obs-key", default=None,
-                 help="override the nominal's obs group (default: auto-detected)")
+                 help="override the safety policy's obs group (default: "
+                      "auto-detected)")
+  p.add_argument("--task-obs-key", default=None,
+                 help="override the task policy's obs group (default: "
+                      "auto-detected)")
   # --- the policies
-  p.add_argument("--nominal", default=None,
+  p.add_argument("--task-policy", default=None,
                  help="pi_task checkpoint (stock SB3 zip); omit for a zero "
-                      "nominal (fallback-only run)")
-  p.add_argument("--nominal-from-twin", action="store_true",
-                 help="use the TWIN's own control policy as the nominal -- the "
-                      "disturbance-effect probe: evaluate the deployable "
-                      "policy the two-player game produced against its own "
-                      "adversary (pair with --no-filter and a --dstb sweep)")
-  p.add_argument("--twin", default=None,
-                 help="safety twin checkpoint (any of the eight MAP cells)")
+                      "task policy (fallback-only run)")
+  p.add_argument("--safety-only", action="store_true",
+                 help="use the SAFETY policy's own control actor as the task "
+                      "policy -- the disturbance-effect probe: evaluate the "
+                      "deployable policy the two-player game produced against "
+                      "its own adversary (pair with --no-filter and a --dstb "
+                      "sweep)")
+  p.add_argument("--safety-policy", default=None,
+                 help="safety policy checkpoint (any of the eight MAP cells)")
   # --- the filter
   p.add_argument("--filter", default="value", choices=sorted(FILTERS),
                  help="which COMPOSITION to deploy; they differ in one module "
                       "each: " + " | ".join(f"{k}: {v}"
                                             for k, v in FILTERS.items()))
   p.add_argument("--no-filter", action="store_true",
-                 help="CONTROL arm: run the nominal unfiltered")
+                 help="CONTROL arm: run the task policy unfiltered")
   p.add_argument("--eps", type=float, default=0.0,
                  help="switching threshold: hand over to the fallback when the "
                       "monitored margin <= eps")
@@ -154,13 +157,14 @@ def build_parser(pre_args):
                       "declare supports_adversary)")
   p.add_argument("--dstb", default="none", choices=["none", "random", "policy"],
                  help="who plays the disturbance: nobody, uniform noise, or a "
-                      "trained min-player (--dstb-twin, else --twin)")
+                      "trained min-player (--adversary-policy, else "
+                      "--safety-policy)")
   p.add_argument("--dstb-scale", type=float, default=1.0,
                  help="ATTACK STRENGTH, continuous. 1.0 = the task's own "
                       "training-time magnitude; sweep it for a curve")
-  p.add_argument("--dstb-twin", default=None,
+  p.add_argument("--adversary-policy", default=None,
                  help="checkpoint supplying the disturbance actor, when it is "
-                      "not the same twin as the certificate")
+                      "not the same safety policy as the certificate")
   # --- run
   p.add_argument("--device", default="cuda:0")
   p.add_argument("--seed", type=int, default=None)
@@ -209,9 +213,9 @@ def main():
   if not args.task:
     raise SystemExit("--task is required (or use a --preset that names one). "
                      f"Registered: {list_tasks()}")
-  if not args.twin:
-    raise SystemExit("--twin is required: the filter's certificate and its "
-                     "fallback both come from a safety twin.")
+  if not args.safety_policy:
+    raise SystemExit("--safety-policy is required: the filter's certificate and "
+                     "its fallback both come from a safety policy.")
   ps = preset(args.preset) if args.preset else None
   device = args.device
 
@@ -221,17 +225,17 @@ def main():
     args.task, args.num_envs, device, adversary=args.adversary,
     env_overrides=overrides, end_criterion=args.end_criterion,
     cfg_transform=ps.cfg_transform(args) if (ps and ps.cfg_transform) else None,
-    safety_obs_key=args.safety_obs_key, nominal_obs_key=args.nominal_obs_key,
+    safety_obs_key=args.safety_obs_key, nominal_obs_key=args.task_obs_key,
     render_mode="rgb_array" if args.video else None)
   if args.episode_s is not None:
     env.mj.cfg.episode_length_s = args.episode_s
   print(f"[env] {args.task} n={env.num_envs} adversary={env.adversary} "
-        f"obs: nominal='{env.nominal_obs_key}' safety='{env.safety_obs_key}'"
+        f"obs: task='{env.nominal_obs_key}' safety='{env.safety_obs_key}'"
         + (f" preset={args.preset}" if ps else ""))
 
   # 2. THE SAFETY FILTER -------------------------------------------------------
-  twin, norm = load_twin(args.twin, device)
-  mods = safety_modules(twin, env.num_envs, device)
+  safety_model, norm = load_twin(args.safety_policy, device)
+  mods = safety_modules(safety_model, env.num_envs, device)
   mods["norm"] = norm
   bundle = build_filter(
     args.filter, mods, env,
@@ -245,19 +249,21 @@ def main():
   print(f"[filter] {args.filter}: {FILTERS[args.filter]}"
         + (" (NOT APPLIED: --no-filter control arm)" if args.no_filter else ""))
 
-  # 3. THE NOMINAL POLICY ------------------------------------------------------
-  if args.nominal and args.nominal_from_twin:
-    raise SystemExit("--nominal and --nominal-from-twin are alternatives: the "
-                     "nominal is either an external pi_task or the twin's own "
-                     "control policy, not both.")
-  if args.nominal_from_twin:
-    print(f"[nominal] the twin's own control policy ({mods['twin']})")
-    nominal = TwinNominal(mods["fallback_fn"], norm)
-  elif args.nominal:
-    nominal = NominalPolicy(*load_nominal(args.nominal, device), device=device)
+  # 3. THE TASK POLICY ---------------------------------------------------------
+  if args.task_policy and args.safety_only:
+    raise SystemExit("--task-policy and --safety-only are alternatives: the "
+                     "task policy is either an external pi_task or the safety "
+                     "policy's own control actor, not both.")
+  if args.safety_only:
+    print(f"[task-policy] the safety policy's own control actor "
+          f"({mods['twin']})")
+    task_policy = TwinNominal(mods["fallback_fn"], norm)
+  elif args.task_policy:
+    task_policy = NominalPolicy(*load_nominal(args.task_policy, device),
+                                device=device)
   else:
-    print("[nominal] none: zero action (fallback-only run)")
-    nominal = ZeroNominal(env.num_envs, env.ctrl_dim, device)
+    print("[task-policy] none: zero action (fallback-only run)")
+    task_policy = ZeroNominal(env.num_envs, env.ctrl_dim, device)
 
   # 4. THE ATTACK --------------------------------------------------------------
   dstb_fn = None
@@ -266,9 +272,9 @@ def main():
       raise SystemExit(f"--dstb {args.dstb} needs a live disturbance channel; "
                        "pass --adversary (the task must support one).")
     src = mods
-    if args.dstb_twin:
-      d_twin, d_norm = load_twin(args.dstb_twin, device)
-      src = safety_modules(d_twin, env.num_envs, device) | {"norm": d_norm}
+    if args.adversary_policy:
+      d_safety, d_norm = load_twin(args.adversary_policy, device)
+      src = safety_modules(d_safety, env.num_envs, device) | {"norm": d_norm}
     dstb_fn = make_dstb(args.dstb, env, src)
     print(f"[dstb] {args.dstb} @ scale={args.dstb_scale} "
           f"(dim={env.dstb_dim}, mode={env.bridge.dstb_mode})")
@@ -297,7 +303,7 @@ def main():
 
   video = VideoRecorder(args.video, args.video_fps) if args.video else None
   summary = run_eval(
-    env, nominal, bundle.filt, metrics, steps=args.steps, norm=norm,
+    env, task_policy, bundle.filt, metrics, steps=args.steps, norm=norm,
     dstb_fn=dstb_fn, dstb_scale=args.dstb_scale, no_filter=args.no_filter,
     command_surgery=surgery, video=video, seed=args.seed,
     progress_every=args.progress_every)
@@ -307,8 +313,8 @@ def main():
   summary.update(
     task=args.task, preset=args.preset, composition=args.filter,
     filter="off" if args.no_filter else os.path.basename(
-      os.path.dirname(os.path.abspath(args.twin))),
-    twin=mods["twin"], steps=args.steps, num_envs=args.num_envs,
+      os.path.dirname(os.path.abspath(args.safety_policy))),
+    safety_policy=mods["twin"], steps=args.steps, num_envs=args.num_envs,
     dstb=args.dstb, dstb_scale=args.dstb_scale, seed=args.seed, tag=args.tag)
   if bundle.shadow is not None:
     summary["certifications"] = bundle.shadow.seeds
