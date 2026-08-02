@@ -10,7 +10,7 @@ task: go2_payload_descent
 adversary: false            # single-player: train the fallback skill on its own first
 end_criterion: reach-avoid  # terminate on reach (g>=0 AND l>=0): lie down and stop
 num_envs: 512
-steps: 15000000             # shorter run: fallback skill, hold at gamma_end (0.9999) from 8M to 15M
+steps: 100000000            # long run: give the sparse-target descent time to be discovered; hold 0.9999 8M->100M
 seed: 0
 out: results/go2_payload_runs
 wandb_project: odd-conditioned
@@ -27,7 +27,7 @@ gradient_steps: 4
 gamma_schedule: step         # 0.99 -> 0.999 @4M -> 0.9999 @8M, then HOLD 0.9999 to 15M
 gamma_init: 0.99
 gamma_end: 0.9999
-gamma_period_frac: 0.267     # jump spacing = 26.7% of 15M => jumps at ~4M and ~8M (absolute, as the 50M runs)
+gamma_period_frac: 0.04      # jump spacing = 4% of 100M => jumps at ~4M and ~8M (absolute), then hold 0.9999
 min_alpha: 0.001
 
 leaderboard_freq: 2000000    # two-player-only knob; kept for parity (single-player run ignores it)
