@@ -46,13 +46,15 @@ dependency remains.
 from __future__ import annotations
 
 from ..margins import compose
-from ..registry import AVOID, REACH_AVOID, TaskSpec, register
+from ..registry import AVOID, CUMULATIVE, REACH_AVOID, TaskSpec, register
 
 
 def register_all() -> None:
   from robot_safety_sandbox.envs.digit_safety.env_cfg import (
+    digit_avoid_from_walk_env_cfg,
     digit_box_stabilize_env_cfg,
     digit_stabilize_env_cfg,
+    digit_walk_rigidtoe_env_cfg,
   )
   from robot_safety_sandbox.envs.digit_safety.margins import (
     g_digit_box_stabilize,
@@ -145,4 +147,40 @@ def register_all() -> None:
     kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
     description="Avoid-only twin of digit_stabilize: don't fall, no reach "
                 "target. Isolation test for whether l affects g-convergence.",
+  ))
+
+  # --- Filter family (E034/E035): the nominal walker + its safety twin --------
+  # These two compose into the deployable FILTER: a CUMULATIVE walker (pi_task)
+  # shielded by a SafetySAC1P avoid twin whose Q(s,a) is valid on the walker's
+  # MOVING states (reset_from_walk_states), for the least-restrictive/QCBF filter.
+
+  # NOMINAL rigidtoe walker (mode=CUMULATIVE): stock SB3 PPO on dense reward.
+  # supports_adversary so the filter eval can drive a torso force on the walking
+  # nominal (the dstb channel); the walker itself trains adversary-off (there is
+  # no two-player cumulative learner — algo_name refuses adversary+cumulative).
+  register(TaskSpec(
+    task_id="digit_walk_rigidtoe",
+    cfg_builder=digit_walk_rigidtoe_env_cfg,
+    mode=CUMULATIVE,
+    ctrl_dim=20,
+    supports_adversary=True,
+    kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
+    description="Digit v3 rigidtoe velocity walker (dense reward, stock SB3 PPO) "
+                "— same plant + obs-92 as the E012 safety twin, so it composes "
+                "with the filter. Train: train.py --family on_policy.",
+  ))
+
+  # SafetySAC1P avoid twin trained on the WALKER's state distribution (E035):
+  # Q_safe(s,a) valid on moving states, for the QCBF/critic filter.
+  register(TaskSpec(
+    task_id="digit_avoid_from_walk",
+    cfg_builder=digit_avoid_from_walk_env_cfg,
+    margin_fn=compose(g_digit_stand),  # avoid-only: fall-only g, no target
+    ctrl_dim=20,
+    mode=AVOID,
+    supports_adversary=False,
+    kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
+    description="SafetySAC1P avoid whose reset distribution is the E034 walker's "
+                "states (incl. shoved) — Q_safe(s,a) valid on MOVING states for "
+                "the QCBF filter. Fall-only g. Train: train.py --family off_policy.",
   ))

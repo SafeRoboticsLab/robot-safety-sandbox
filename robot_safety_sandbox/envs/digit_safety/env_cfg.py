@@ -111,3 +111,45 @@ def digit_box_stabilize_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   from robot_safety_sandbox.envs.digit_safety import mdp as _zoo_mdp
   cfg.terminations["nan_term"] = TerminationTermCfg(func=_zoo_mdp.nan_detection)
   return cfg
+
+
+def digit_walk_rigidtoe_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """NOMINAL rigidtoe velocity WALKER (mode=CUMULATIVE pi_task) — the raw
+  velocity env ``digit_v3_flat_safety_rigidtoe_env_cfg`` (same plant + obs-92 as
+  the E012 safety twin; keeps the twist command + dense locomotion rewards + the
+  COMMAND CURRICULUM; ``digit_stabilize`` is this cfg with the command pinned to
+  0 and rewards dropped). Obs is unchanged (curriculum is a reset-time manager,
+  not an obs term), so it composes with the E012 value-shield.
+
+  E034: the command curriculum (easy->hard) is what a biped needs to learn a
+  reliable gait (E033, curriculum-off, was fall-prone ~35%). Train with
+  ``train.py --family on_policy`` (stock SB3 PPO on the dense reward).
+  """
+  return digit_v3_flat_safety_rigidtoe_env_cfg(play=play)
+
+
+def digit_avoid_from_walk_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """SafetySAC AVOID env whose STATE DISTRIBUTION is the E034 walker's — the fix
+  for the E012-V OOD failure. Built on the WALK cfg (so the obs carries the twist
+  WALKING command, matching deployment), but it is a SAFETY (mode=AVOID) task:
+  the dense rewards are dropped (the margin hook ``g_digit_stand``, fall-only, is
+  the reward) and it RESETS INTO captured walker states
+  (``reset_from_walk_states``), incl. shoved/off-balance ones. A SafetySAC1P
+  trained here learns Q_safe(s, a) = recoverability from MOVING states, which is
+  what the QCBF filter evaluates on the walker's actions — unlike E012, trained
+  only from a still stand.
+
+  Needs ``/data/duynguyen/walker_states.pt`` (capture_walk_states.py). Train with
+  ``train.py --family off_policy`` (SafetySAC1P).
+  """
+  from robot_safety_sandbox.envs.digit_safety import mdp as _zoo_mdp
+
+  cfg = digit_v3_flat_safety_rigidtoe_env_cfg(play=play)  # walk cfg: command + rewards
+  cfg.rewards = {}          # safety task: the margin hook replaces the dense reward
+  cfg.curriculum = {}       # fixed command range (the captured state dist is what matters)
+  # reset INTO walker states (root + joints); drop the default joint reset so it
+  # does not clobber the buffer's joint configuration.
+  cfg.events["reset_base"].func = _zoo_mdp.reset_from_walk_states
+  cfg.events["reset_base"].params = {"states_path": "/data/duynguyen/walker_states.pt"}
+  cfg.events.pop("reset_robot_joints", None)
+  return cfg

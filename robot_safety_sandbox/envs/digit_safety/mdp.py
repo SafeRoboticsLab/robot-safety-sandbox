@@ -652,3 +652,34 @@ def stand_still_flat_orientation_l2(
     xy_squared = torch.sum(torch.square(asset.data.projected_gravity_b[:, :2]), dim=1)
 
   return is_standing * xy_squared
+
+
+def reset_from_walk_states(env, env_ids, states_path: str,
+                           pos_noise: float = 0.03, vel_noise: float = 0.05) -> None:
+  """Reset INTO captured walker states — the deployment state distribution.
+
+  Loads a buffer of E034-walker sim states (``capture_walk_states.py``:
+  joint_pos 30, joint_vel 30, root_pos 3, root_quat 4, root_lin_vel 3,
+  root_ang_vel 3) and spawns each resetting env at a random one (+ small noise).
+  This is what makes the SafetySAC avoid Q valid ON the walker's MOVING states
+  (the fix for the E012-V OOD failure: a safety value trained only from a still
+  stand is garbage on walking states). Cached on the env after first load.
+  """
+  asset = env.scene[SceneEntityCfg("robot").name]
+  buf = getattr(env, "_walk_states_buf", None)
+  if buf is None:
+    buf = torch.load(states_path, map_location=asset.data.default_root_state.device,
+                     weights_only=True)["states"]
+    env._walk_states_buf = buf
+  dev = buf.device
+  n = len(env_ids)
+  idx = torch.randint(0, buf.shape[0], (n,), device=dev)
+  s = buf[idx]
+  jp = s[:, 0:30] + torch.randn(n, 30, device=dev) * pos_noise
+  jv = s[:, 30:60] + torch.randn(n, 30, device=dev) * vel_noise
+  rpos = s[:, 60:63] + env.scene.env_origins[env_ids]
+  rquat = s[:, 63:67]
+  rvel = s[:, 67:73]
+  asset.write_joint_state_to_sim(jp, jv, env_ids=env_ids)
+  asset.write_root_link_pose_to_sim(torch.cat([rpos, rquat], dim=1), env_ids=env_ids)
+  asset.write_root_link_velocity_to_sim(rvel, env_ids=env_ids)
