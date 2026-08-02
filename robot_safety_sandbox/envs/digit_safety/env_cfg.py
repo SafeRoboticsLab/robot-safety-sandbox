@@ -8,7 +8,7 @@
     way ``go2_stabilize`` does, not from a widened spawn distribution.
 
 The Digit robot asset + calibrated safety env builders are VENDORED into the
-zoo (``envs/assets_digit`` + ``envs/digit_safety/builders.py``) — no mjlab-fork
+zoo (``envs/assets/digit`` + ``envs/digit_safety/builders.py``) — no mjlab-fork
 dependency. The cfg is otherwise used UNMODIFIED — the zoo bridge auto-detects
 the ``actor`` observation group, and drops ``push_robot`` itself (the adversary
 replaces it). Action scaling is the bridge's ``ctrl_gain`` (see

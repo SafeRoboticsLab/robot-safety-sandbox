@@ -1,7 +1,7 @@
 """car_goal: a differential-drive car that must REACH a goal disk while AVOIDING
 obstacle cylinders -- the mjlab-zoo, reach-avoid analog of ``bicycle5d.py``.
 
-Single-player reach-avoid (ReachAvoidPPO, 2 wheel-velocity controls):
+Single-player reach-avoid (ReachAvoidPPO1P, 2 wheel-velocity controls):
 
   g(s) = signed distance from the car to the nearest obstacle, normalized.
          g >= 0 == not in collision.  Rides on ``reward`` (the safety hook).
@@ -36,7 +36,7 @@ from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils.lab_api.math import quat_apply_inverse
 from mjlab.viewer import ViewerConfig
 
-from robot_safety_sandbox.envs.assets_car.car_constants import get_car_robot_cfg
+from robot_safety_sandbox.envs.assets.car.car_constants import get_car_robot_cfg
 from robot_safety_sandbox.envs.terrains.car_arena import (
   CAR_ARENA_CFG,
   GOAL_RADIUS,
@@ -138,7 +138,8 @@ def _fix_wheel_actuators(spec) -> None:
 
 # --- env cfg builder -----------------------------------------------------------
 
-def car_goal_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+def car_goal_env_cfg(play: bool = False,
+                     episode_length_s: float = 12.0) -> ManagerBasedRlEnvCfg:
   obs_terms = {
     "root_vel": ObservationTermCfg(func=obs_root_vel),
     "goal": ObservationTermCfg(func=obs_goal_car),
@@ -183,9 +184,12 @@ def car_goal_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   return ManagerBasedRlEnvCfg(
     decimation=4,
-    episode_length_s=12.0,   # 600 control steps @ dt 0.02: ample time to weave
-                            # to the 2 m goal at ~1.5 m/s (goal was unreachable at
-                            # 3 m / 8 s -- see START_TO_GOAL / _WHEEL_SPEED)
+    episode_length_s=episode_length_s,  # 12 s = 600 control steps @ dt 0.02:
+                            # time to weave to the 2 m goal at ~1.5 m/s (goal was
+                            # unreachable at 3 m / 8 s -- see START_TO_GOAL /
+                            # _WHEEL_SPEED). Overridable: at gamma=0.999 the car
+                            # takes a longer safe detour, so a 20 s horizon lets
+                            # more episodes finish the reach (car_goal E064).
     scene=SceneCfg(
       num_envs=1,
       env_spacing=2.0,

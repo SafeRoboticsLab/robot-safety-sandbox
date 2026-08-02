@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from robot_safety_sandbox.envs.assets_go2.go2_constants import get_go2_robot_cfg
+from robot_safety_sandbox.envs.assets.go2.go2_constants import get_go2_robot_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg

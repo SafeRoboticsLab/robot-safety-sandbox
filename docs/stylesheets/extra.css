@@ -14,3 +14,9 @@
 [data-md-color-scheme=slate] {
   --md-typeset-a-color: #F1A04A;
 }
+
+/* tighten the gap between the header logo and the site title
+   (must out-specify Material's [dir=ltr] .md-header__title{margin-left:1rem}) */
+.md-header__button.md-logo { padding-right: 0.2rem; margin-right: 0; }
+[dir=ltr] .md-header__title { margin-left: 0; }
+[dir=rtl] .md-header__title { margin-right: 0; }

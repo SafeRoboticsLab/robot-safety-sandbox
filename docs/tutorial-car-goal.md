@@ -7,7 +7,7 @@ and every choice is explained from the theory up.
 
 ![car_goal trained rollout](environments/assets/car_goal.gif){ width="560" }
 
-*The finished product: a trained `ReachAvoidPPO` policy driving the car from a
+*The finished product: a trained `ReachAvoidPPO1P` policy driving the car from a
 standstill, weaving between the two purple obstacles, into the green goal disk.*
 
 By the end you will have touched the whole stack once, in the order you would
@@ -20,13 +20,13 @@ build your own robot:
     |---|---|---|
     | **mjlab** | the physics: MJCF specs, actuators, terrains, the GPU sim | your simulator |
     | **robot_safety_sandbox** (the *sandbox*) | the safety *contract*: tasks, margins `(g, l)`, the registry, the two bridges | **this repo** |
-    | **safety_sb3** | the *learners*: SafetyPPO / ReachAvoidPPO / Isaacs / Gameplay, on GPU | the algorithm layer |
+    | **safety_sb3** | the *learners*: `{Safety,ReachAvoid}{PPO,SAC}{1P,2P}`, on GPU | the algorithm layer |
 
     The sandbox is the thin, honest middle: it turns a plain mjlab environment
     into a *specification* a safety learner can optimize, and nothing more. Learn
     this one example and you can bring any mjlab robot into the same pipeline.
 
-The finished files live under `robot_safety_sandbox/envs/assets_car/`,
+The finished files live under `robot_safety_sandbox/envs/assets/car/`,
 `envs/terrains/car_arena.py`, `envs/car_goal/env_cfg.py`, and
 `tasks/car_goal.py`. Read this page top-to-bottom, then open those four files —
 they will read like prose.
@@ -68,10 +68,10 @@ Everything below is just *supplying `g` and `l` honestly* for one small robot.
 
 ## 1. The asset — a robot mjlab can drive
 
-**Files:** `envs/assets_car/xmls/car.xml`, `envs/assets_car/car_constants.py`
+**Files:** `envs/assets/car/xmls/car.xml`, `envs/assets/car/car_constants.py`
 
 A task needs a body. We copied a minimal differential-drive car MJCF — a chassis
-on a free joint, two independently-driven wheels (`left`, `right`), and a passive
+on a free joint, two independently driven wheels (`left`, `right`), and a passive
 caster — and wrapped it the way every robot in this repo is wrapped: a `get_spec`
 that loads the MJCF, and an `EntityCfg` that tells mjlab how to actuate it.
 
@@ -211,7 +211,7 @@ entire control interface, and it is why `ctrl_dim = 2` in the task spec (§5).
     "velocity_range": {}})     # empty -> zero initial velocity -> starts from REST
 ```
 
-Small position + heading jitter each episode is the anti-memorization pressure
+Small position and heading jitter in each episode provide anti-memorization pressure
 (combined with the egocentric obs, it teaches a *reactive* policy). The empty
 velocity range keeps the standstill start from §1 — the property that makes the
 reach-avoid-vs-avoid contrast meaningful.
@@ -303,32 +303,37 @@ register(TaskSpec(
     cfg_builder=car_goal_env_cfg,       # §3  — the plain mjlab environment
     margin_fn=car_margins,              # §4  — supplies (g, l)
     ctrl_dim=2,                         # §3  — two wheel commands
-    default_algo="ReachAvoidPPO",       # this is a REACH-avoid task
+    mode="reach-avoid",                 # this is a REACH-avoid task
     supports_adversary=False,           # single-player (no disturbance agent)
     end_criterion="reach-avoid",        # end on reach OR collision (see below)
     description="Drive to the goal disk while avoiding obstacle cylinders."))
 ```
 
-!!! abstract "`default_algo` picks the *problem*; `--adversary` picks the *players*"
-    The sandbox keeps a 2×2 honest. The task's margins fix the **column** (does it
-    have a target set?), and the run's `--adversary` flag fixes the **row** (is
-    there a disturbance player?):
+!!! abstract "The MAP — **M**ode. **A**lgorithm. **P**layers."
+    `mode` is the ONLY thing a task says about its learner. The learner's *name*
+    is three letters concatenated, and each comes from one place:
 
-    | task problem | 1-player | 2-player (`--adversary`) |
+    | letter | source | here |
     |---|---|---|
-    | **avoid** (`default_algo=SafetyPPO`) | `SafetyPPO` | `IsaacsPPO` |
-    | **reach-avoid** (`default_algo=ReachAvoidPPO`) | `ReachAvoidPPO` | `GameplayPPO` |
+    | **M**ode | the task's `mode=` (a property of its margins) | `ReachAvoid` |
+    | **A**lgorithm | the run's `--family` (`on_policy`→PPO, `off_policy`→SAC) | `PPO` |
+    | **P**layers | the run's `--adversary` | `1P` |
 
-    `car_goal` declares a target (`l`), so it lives in the reach-avoid row. We run
-    it single-player, so the learner resolves to `ReachAvoidPPO`. (Declaring `l` on
-    a task and then training it with an *avoid* learner is refused by the registry —
-    a reach-avoid problem needs a reach-avoid learner.)
+    | task `mode` | 1-player | 2-player (`--adversary`) |
+    |---|---|---|
+    | `"safety"` (avoid) | `SafetyPPO1P` | `SafetyPPO2P` |
+    | `"reach-avoid"` | `ReachAvoidPPO1P` | `ReachAvoidPPO2P` |
+
+    `car_goal` declares a target (`l`), so `mode="reach-avoid"`. We run it
+    single-player on the PPO family, so the learner resolves to
+    `ReachAvoidPPO1P`. (Declaring `mode="reach-avoid"` on a task whose margins
+    carry no target is refused by the registry — see §6.)
 
 `end_criterion="reach-avoid"` tells the env to **end the episode on arrival**
 (`g ≥ 0 ∧ l ≥ 0`) as well as on collision. For a "drive there and stop" task this
 is the natural choice — reaching the goal *is* success. (The alternative,
 `"failure"`, keeps going after arrival so the value can climb *deeper* into the
-target; see the [API guide](API.md#4-end_criterion-when-the-episode-ends).)
+target; see [termination](concepts/termination.md).)
 
 Finally, wire the registration into the package so it loads on import:
 
@@ -343,9 +348,9 @@ That is the whole task. `make_tensor("car_goal")` now works.
 
 ## 6. The algorithm — why reach-avoid, not avoid
 
-**Learner:** `safety_sb3.ReachAvoidPPO`
+**Learner:** `safety_sb3.ReachAvoidPPO1P`
 
-The task resolves to `ReachAvoidPPO`, and it *has* to. Here is the discriminating
+The task resolves to `ReachAvoidPPO1P`, and it *has* to. Here is the discriminating
 thought experiment this whole environment is built around:
 
 !!! example "Avoid vs reach-avoid, on the same car"
@@ -386,14 +391,28 @@ for exact reproduction.
 
 ```yaml
 # configs/car_goal.yaml
+family: on_policy        # PPO family
 task: car_goal
 num_envs: 1024
 steps: 25_000_000
 seed: 0
 net: "256,256"
 ent_coef: 0.003
+lr: 0.0005
+adaptive_lr: true        # KL-adaptive LR (desired_kl 0.01)
+gamma: 0.99              # base discount...
+gamma_anneal: true       # ...annealed 0.99 -> 0.999 -> 0.9999 over training
 video_interval: 2_000_000
 ```
+
+!!! note "Why the discount is annealed"
+    The `gamma_anneal` is **load-bearing** for this task. The reach-avoid value is
+    a Hamilton–Jacobi value; annealing `γ` toward 1 recovers the true (undiscounted)
+    reachability value, which is what lets the policy plan the long weave through the
+    slalom *from a standstill* rather than lunging at the goal. Training with a fixed
+    low `γ` reaches far less reliably. (The value's `explained_variance` dips late as
+    `γ→0.9999` makes the near-undiscounted target harder to fit — that is expected and
+    does **not** mean the policy is worse.)
 
 Launch it:
 
@@ -402,7 +421,7 @@ python examples/train.py --config configs/car_goal.yaml
 ```
 
 That is the entire command. The trainer resolves the learner from the task
-(`car_goal` × single-player → `ReachAvoidPPO`), builds `1024` GPU environments,
+(`car_goal` × PPO family × single-player → `ReachAvoidPPO1P`), builds `1024` GPU environments,
 prints the resolved end-criterion and recipe, streams telemetry to wandb, saves
 periodic videos, and writes `runs/car_goal/final_model.zip` +
 `tensornormalize.pt` at the end.
@@ -411,18 +430,30 @@ periodic videos, and writes `runs/car_goal/final_model.zip` +
 # or drive it yourself
 from robot_safety_sandbox import make_tensor, algo_name
 env = make_tensor("car_goal", num_envs=1024)      # GPU-resident tensor path
-# algo_name("car_goal") -> "ReachAvoidPPO"
+# algo_name("car_goal") -> "ReachAvoidPPO1P"
 ```
 
 ---
 
 ## 8. The result
 
-At `25M` env-steps the trained policy reaches the goal on the large majority of
-randomized spawns, weaving through the slalom from a standstill without entering a
-keep-out region — the rollout in the GIF at the top, and the path in the margin
-diagram in §4. A pure avoid policy on the same env sits at ≈ 0 % reach: the
-contrast is the point.
+At `25M` env-steps the trained policy drives to the goal from a standstill,
+weaving through the slalom without entering a keep-out region — the rollout in the
+GIF at the top, and the path in the margin diagram in §4. On a held-out sweep of
+512 randomized spawns, the canonical run (`seed 0`) reaches **≈67%** of them with
+**0% constraint violations** (it never touches the obstacle boundary); across
+seeds, the reach rate averages **≈60%**, with a single-digit violation rate. A pure
+*avoid* policy on the same env sits at ≈0% reach — it stays safe by never
+setting off — so the reach rate is exactly what separates a real reach-avoid
+policy from a lazy one.
+
+!!! tip "Measuring it yourself"
+    ```bash
+    python examples/eval.py --task car_goal \
+        --safety-policy runs/car_goal/final_model.zip --safety-only \
+        --no-filter --num-envs 512 --steps 700
+    ```
+    reports `task_success` (reach rate), `safe_rate`, and `violation_rate`.
 
 You have now built, from nothing, a complete safety task and trained a certified
 reach-avoid policy on it. Every robot in the [environments showreel](environments/index.md)
@@ -442,10 +473,11 @@ Use `car_goal` as a template and swap one piece at a time:
    interface, a randomized reset, a `g < 0` termination.
 4. **Margins** — a `(g, l)` function; normalize and clamp, let the sign carry the
    spec. See [`margins.py`](reference.md#margins) for reusable terms.
-5. **Task** — one `TaskSpec` (`default_algo`, `end_criterion`, `ctrl_dim`), and a
+5. **Task** — one `TaskSpec` (`mode`, `end_criterion`, `ctrl_dim`), and a
    line in `__init__.py`.
-6. **Algorithm** — inherit the recipe; pick avoid vs reach-avoid by whether you
-   declared an `l`.
+6. **Algorithm** — inherit the recipe; the MAP does the rest: `mode` picks avoid
+   vs reach-avoid (by whether you declared an `l`), `--family` picks PPO vs SAC,
+   `--adversary` picks 1P vs 2P.
 7. **Config + run** — a `configs/*.yaml` and `python examples/train.py --config …`.
 
 Deeper references: the [API guide](API.md) (the `g`/`l` contract, `TaskSpec`,

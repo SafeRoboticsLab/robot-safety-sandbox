@@ -1,18 +1,19 @@
 """Agility Digit v3 standing safety filter vs an adversarial torso force.
 
-The humanoid analog of ``go2_stabilize`` (ISAACS Tier 2) and, like it, a
-"no-machinery" task: flat ground, stock spawns, zero command, no curriculum, no
+The humanoid analog of ``go2_stabilize`` and, like it, a "no-machinery" task: flat ground, stock spawns, zero command, no curriculum, no
 staged pipeline — trainable from scratch in one run, robustified by toggling
 ``--adversary`` (the worst-case torso force replaces the random push the bridge
 drops).
 
 Two problems live here, and they take different backups (see margins.py):
 
-  digit_stabilize                    REACH-AVOID — a real, reachable target
-                                     (``l_digit_stay``). ReachAvoidPPO, or
-                                     GameplayPPO with ``--adversary``.
-  the other four (``*_avoid``,       AVOID — no target set, no l. SafetyPPO,
-  ``*_stay``, box family)            or IsaacsPPO with ``--adversary``.
+  digit_stabilize                    mode=REACH-AVOID — a real, reachable
+                                     target (``l_digit_stay``) ->
+                                     ReachAvoidPPO1P, or ReachAvoidPPO2P
+                                     with ``--adversary``.
+  the other four (``*_avoid``,       mode=AVOID — no target set, no l ->
+  ``*_stay``, box family)            SafetyPPO1P, or SafetyPPO2P with
+                                     ``--adversary``.
 
 The ``*_stay`` tasks are avoid despite wanting a stance: "remain in the stance
 set forever" is VIABILITY, folded into g as ``min(g_fall, l_stance)`` (see
@@ -38,14 +39,14 @@ Digit specifics vs the go2 default: ``ctrl_dim=20`` (actuators); ``ctrl_gain=12`
 adversary force is applied to the ``torso`` body.
 
 The Digit asset and env builders are vendored into the zoo
-(``envs/assets_digit`` + ``envs/digit_safety/builders.py``); no mjlab-fork
+(``envs/assets/digit`` + ``envs/digit_safety/builders.py``); no mjlab-fork
 dependency remains.
 """
 
 from __future__ import annotations
 
 from ..margins import compose
-from ..registry import TaskSpec, register
+from ..registry import AVOID, REACH_AVOID, TaskSpec, register
 
 
 def register_all() -> None:
@@ -65,14 +66,14 @@ def register_all() -> None:
   # free box on the forearms while standing. Box drop/spill is terminal ->
   # box margins live in g at every stage. Same staged pipeline as the no-box
   # family: avoid (from scratch) -> stay+planted anneal (warm-start) ->
-  # ISAACS --adversary. Actor obs includes box_pose/box_vel (no-box
+  # the two-player game via --adversary. Actor obs includes box_pose/box_vel (no-box
   # checkpoints are not warm-start compatible).
   register(TaskSpec(
     task_id="digit_box_stabilize_avoid",
     cfg_builder=digit_box_stabilize_env_cfg,
     margin_fn=compose(g_digit_box_stand),  # avoid-only: no target set
     ctrl_dim=20,
-    default_algo="SafetyPPO",  # +--adversary -> IsaacsPPO (two-player avoid)
+    mode=AVOID,  # +--adversary -> SafetyPPO2P (the two-player avoid game)
     supports_adversary=True,
     kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
     description="Box stage 1: don't fall AND don't drop/spill the box "
@@ -84,16 +85,16 @@ def register_all() -> None:
     cfg_builder=digit_box_stabilize_env_cfg,
     margin_fn=compose(g_digit_box_stabilize),  # avoid-only: no target set
     ctrl_dim=20,
-    default_algo="SafetyPPO",  # +--adversary -> IsaacsPPO (two-player avoid)
+    mode=AVOID,  # +--adversary -> SafetyPPO2P (the two-player avoid game)
     supports_adversary=True,
     kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
     description="Box STAY: remain upright/settled/planted (annealed via "
-                "_l_alpha) AND keep the box balanced forever; ISAACS via "
-                "--adversary.",
+                "_l_alpha) AND keep the box balanced forever; two-player avoid "
+                "game via --adversary.",
   ))
 
   # STAY formulation (the fix for the reach-avoid structural degeneracy — see
-  # g_digit_stabilize): avoid-only SafetyPPO on min(g_fall, l_stance), fall-only
+  # g_digit_stabilize): avoid-only (SafetyPPO1P) on min(g_fall, l_stance), fall-only
   # termination, stance annealed via _l_alpha. "Remain in the stance set
   # forever" instead of "touch it once" (trivially satisfied at spawn).
   register(TaskSpec(
@@ -106,7 +107,7 @@ def register_all() -> None:
     # the corrected anchor and is gone; see margins.py.
     margin_fn=compose(g_digit_stabilize),
     ctrl_dim=20,
-    default_algo="SafetyPPO",  # +--adversary -> IsaacsPPO (two-player avoid)
+    mode=AVOID,  # +--adversary -> SafetyPPO2P (the two-player avoid game)
     supports_adversary=True,
     kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
     description="Flat ground: STAY upright + settled forever (viability of the "
@@ -121,12 +122,12 @@ def register_all() -> None:
     # reachable target set, so the reach-avoid backup applies as written.
     margin_fn=compose(g_digit_stand, l_digit_stay),
     ctrl_dim=20,
-    default_algo="ReachAvoidPPO",  # +--adversary -> GameplayPPO (two-player RA)
+    mode=REACH_AVOID,  # +--adversary -> ReachAvoidPPO2P (two-player RA game)
     supports_adversary=True,
     kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
     description="Flat ground: stand in place (upright, at rest, near spawn) — a "
                 "REACHABLE reach-avoid target — despite an adversarial torso "
-                "force (humanoid ISAACS Tier-2).",
+                "force (the humanoid two-player reach-avoid game).",
   ))
 
   # Avoid-only twin: identical env/g, NO reach target (the backup differs, not
@@ -139,7 +140,7 @@ def register_all() -> None:
     cfg_builder=digit_stabilize_env_cfg,
     margin_fn=compose(g_digit_stand),  # avoid-only: no target set
     ctrl_dim=20,
-    default_algo="SafetyPPO",  # +--adversary -> IsaacsPPO (two-player avoid)
+    mode=AVOID,  # +--adversary -> SafetyPPO2P (the two-player avoid game)
     supports_adversary=True,
     kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
     description="Avoid-only twin of digit_stabilize: don't fall, no reach "

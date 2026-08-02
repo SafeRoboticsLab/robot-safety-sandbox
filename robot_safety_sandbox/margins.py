@@ -70,8 +70,14 @@ def g_terrain_relative(env, scan_name="terrain_scan",
   terms = [height, tilt]
   try:
     sensor = env.scene[nonfoot_name]
-    force = (sensor.data.force_history
-             if sensor.data.force_history is not None else sensor.data.force)
+    hist = sensor.data.force_history
+    if getattr(env, "_zoo_instantaneous_contact", False):
+      # Rollout shadow sims that could not round-trip the contact-force history
+      # set this flag (filters/rollout.py, contact_history="instantaneous"): a
+      # half-filled window would silently under-report the peak force and hand
+      # back a bogus margin, so read the instantaneous force instead.
+      hist = None
+    force = hist if hist is not None else sensor.data.force
     if force is not None:
       mag = torch.norm(force, dim=-1)
       while mag.dim() > 1:
@@ -189,8 +195,9 @@ def l_launch_basin(env, gap_x=2.5, band=0.35, v_launch=2.2, v_norm=0.5,
 # See safety_sb3/backups.py and RELEASE_NOTES v0.2.0 for the proof.
 #
 # An avoid-only task therefore declares NO l at all — ``compose(g_fn)`` — and
-# runs on an AVOID learner: SafetyPPO (single-player) or IsaacsPPO (two-player,
-# ISAACS eq. 7). Those ignore l entirely.
+# declares ``mode="safety"``, so the MAP resolves it to an AVOID learner:
+# SafetyPPO1P / SafetySAC1P, or SafetyPPO2P / SafetySAC2P with ``--adversary``.
+# Every one of those ignores l entirely.
 
 
 # --- composition ---------------------------------------------------------------
@@ -202,10 +209,10 @@ def compose(g_fn, l_fn=None, clamp: float = CLAMP):
   still has to hand the learner an ``l`` channel (``step_tensor`` returns a
   5-tuple), so a zero placeholder is emitted — but the returned margin_fn is
   tagged ``has_target = False``, and it is ONLY valid under an avoid learner
-  (SafetyPPO / IsaacsPPO), which ignores l. Feeding it to a reach-avoid learner
-  (ReachAvoidPPO / GameplayPPO) is the degenerate ``l_zero`` case above; the
-  tag exists so that mistake raises instead of training silently — see
-  ``registry.algo_name`` / ``examples/train.py``.
+  (the ``Safety*`` half of the MAP, 1P or 2P), which ignores l. Feeding it to a
+  reach-avoid learner (``ReachAvoid*``) is the degenerate ``l_zero`` case above;
+  the tag exists so that mistake raises instead of training silently — see
+  ``registry.algo_name``.
   """
   def margin_fn(env):
     g = g_fn(env).clamp(-clamp, clamp)

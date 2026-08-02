@@ -28,6 +28,19 @@ import yaml
 # individual entries, overriding the config's dict per-key.
 _ENV_OVERRIDES_KEY = "env_overrides"
 
+# A second reserved config key: the ``safety_filter:`` block that trains a task
+# policy INSIDE a safety filter (the off-policy trainer reads it). Like
+# ``env_overrides`` it is a nested-dict passthrough, resolved onto
+# ``args.safety_filter``, with a per-key CLI override ``--safety-filter KEY=VAL``
+# (repeatable, wins per-key). Schema (every key optional; presence of
+# ``safety_policy`` selects the filtered arm, absence = the unfiltered control):
+#     safety_filter:
+#       safety_policy: path/to/twin.zip   # the fallback twin; omit -> control
+#       filter: critic                    # value | critic | qcbf
+#       eps: 0.1                           # switching threshold
+#       smoothing: false                  # HeuristicSmoothing vs canonical switch
+_SAFETY_FILTER_KEY = "safety_filter"
+
 
 def _parse_kv(pairs):
     """Parse ``["k=v", ...]`` into a dict, interpreting each value as YAML
@@ -49,9 +62,10 @@ def merge_config(parser):
     keys are validated + applied as defaults on ``parser``, then ``parser`` does
     the strict parse. Precedence: argparse defaults < config < explicit CLI flags.
 
-    The reserved ``env_overrides:`` config key (a dict) is a PASSTHROUGH — not
-    validated against the flags — resolved (merged with any ``--env-override``
-    CLI entries, CLI winning per-key) onto ``args.env_overrides``.
+    The reserved ``env_overrides:`` and ``safety_filter:`` config keys (each a
+    dict) are PASSTHROUGHS — not validated against the flags — resolved (each
+    merged with its per-key CLI overrides, CLI winning per-key) onto
+    ``args.env_overrides`` / ``args.safety_filter``.
 
     Call this INSTEAD of ``parser.parse_args()``. Returns the args namespace.
     """
@@ -59,6 +73,7 @@ def merge_config(parser):
     pre.add_argument("--config", default=None)
     path = pre.parse_known_args()[0].config
     cfg_env_overrides = {}
+    cfg_safety_filter = {}
     if path:
         if not os.path.exists(path):
             raise SystemExit(f"[config] file not found: {path}")
@@ -73,6 +88,11 @@ def merge_config(parser):
             raise SystemExit(
                 f"[config] '{_ENV_OVERRIDES_KEY}' must be a mapping, got "
                 f"{type(cfg_env_overrides).__name__}")
+        cfg_safety_filter = cfg.pop(_SAFETY_FILTER_KEY, {}) or {}   # reserved passthrough
+        if not isinstance(cfg_safety_filter, dict):
+            raise SystemExit(
+                f"[config] '{_SAFETY_FILTER_KEY}' must be a mapping, got "
+                f"{type(cfg_safety_filter).__name__}")
         cfg.pop("family", None)   # reserved: consumed by the train.py router, not a trainer arg
         valid = {a.dest for a in parser._actions if a.dest not in ("help", "config")}
         bad = [k for k in cfg if k not in valid]
@@ -89,24 +109,31 @@ def merge_config(parser):
                 a.required = False
         print(f"[config] loaded {path} ({len(cfg)} keys"
               f"{f' + {len(cfg_env_overrides)} env_overrides' if cfg_env_overrides else ''}"
+              f"{f' + {len(cfg_safety_filter)} safety_filter' if cfg_safety_filter else ''}"
               f"); CLI flags override it")
     args = parser.parse_args()   # strict parse: config = defaults, CLI overrides
     # Resolve env_overrides: config dict, then CLI --env-override entries (win per-key).
     cli_env = _parse_kv(getattr(args, "env_override", None))
     args.env_overrides = {**cfg_env_overrides, **cli_env}
+    # Resolve safety_filter the same way (config dict, then --safety-filter CLI).
+    cli_sf = _parse_kv(getattr(args, "safety_filter_override", None))
+    args.safety_filter = {**cfg_safety_filter, **cli_sf}
     return args
 
 
 def dump_config(outdir, args):
     """Write the fully-resolved run config to ``<outdir>/config.yaml``.
 
-    Drops ``config`` and the raw ``env_override`` CLI list, keeping the resolved
-    ``env_overrides`` dict, so the dump round-trips via ``--config``. Reproduce
-    the run with ``--config <that file>``."""
-    drop = {"config", "env_override"}
+    Drops ``config`` and the raw ``env_override`` / ``safety_filter_override``
+    CLI lists, keeping the resolved ``env_overrides`` / ``safety_filter`` dicts,
+    so the dump round-trips via ``--config``. Reproduce the run with
+    ``--config <that file>``."""
+    drop = {"config", "env_override", "safety_filter_override"}
     d = {k: v for k, v in vars(args).items() if k not in drop}
     if not d.get("env_overrides"):
         d.pop("env_overrides", None)   # omit an empty dict for tidiness
+    if not d.get("safety_filter"):
+        d.pop("safety_filter", None)   # omit an empty dict for tidiness
     path = os.path.join(outdir, "config.yaml")
     with open(path, "w") as f:
         yaml.safe_dump(d, f, sort_keys=True, default_flow_style=False)

@@ -1,7 +1,7 @@
 # Extending the sandbox
 
-Everything in the sandbox is a plain-python dataclass config plus small torch
-functions — no YAML layer, no hydra. To add a task you write (1) an env cfg
+Everything in the sandbox is a plain Python dataclass config plus small Torch
+functions — no YAML layer, no Hydra. To add a task, you write (1) an env cfg
 builder, (2) a margin function, (3) a `TaskSpec` registration; each part is a
 few dozen lines patterned on an existing task. This guide walks the four
 extension axes with worked examples taken from the shipped tasks.
@@ -12,19 +12,24 @@ The registry contract (`robot_safety_sandbox/registry.py`):
 register(TaskSpec(
   task_id="my_task",
   cfg_builder=my_env_cfg,          # (play: bool) -> ManagerBasedRlEnvCfg
-  margin_fn=my_margins,            # (env) -> (g, l)   [None for kind="nominal"]
-  default_algo="ReachAvoidPPO",    # the PROBLEM: SafetyPPO/IsaacsPPO = avoid,
-                                   # ReachAvoidPPO/GameplayPPO = reach-avoid.
-                                   # --adversary swaps in the 2-player learner
-                                   # of the SAME problem (see registry.algo_name)
-  kind="safety",                   # "safety" (margins) | "nominal" (dense)
+  margin_fn=my_margins,            # (env) -> (g, l)  [None for mode="cumulative"]
+  mode="reach-avoid",              # REQUIRED. Which BACKUP values it: "safety"
+                                   # (avoid), "reach-avoid", or "cumulative"
+                                   # (plain RL on the dense env reward -- the
+                                   # task policy a filter wraps). This is the
+                                   # MAP's M and the ONLY learner-related thing
+                                   # you declare: the A comes from --family and
+                                   # the P from --adversary, so this task is
+                                   # ReachAvoidPPO1P / ReachAvoidSAC2P / ... as
+                                   # the run chooses (see registry.algo_name).
   supports_adversary=False,
 ))
 ```
 
-Then `examples/train.py --family on_policy --task my_task` (safety) or `train_nominal.py`
-(nominal) just work; `make_tensor("my_task", num_envs=2048)` builds the
-GPU-resident env.
+Then `examples/train.py --family on_policy --task my_task` just works for EVERY
+mode (the trainer branches on it: a safety_sb3 learner for the safety modes,
+stock SB3 PPO for `"cumulative"`); `make_tensor("my_task", num_envs=2048)` builds
+the GPU-resident env.
 
 ## 1. Margin functions (g and l)
 
@@ -58,6 +63,7 @@ def l_at_rest_past(env, x_goal=5.0):
 
 Conventions that matter (each was learned the hard way — see
 safety-stable-baselines/BEST_PRACTICES.md):
+
 - **min = AND, max = OR** for combining conditions inside one margin.
 - **Normalize every term to O(1)**; the l/g magnitude ratio is the implicit
   risk-tolerance dial (break-even attempt probability = |g|/(|g|+l)).
@@ -88,7 +94,7 @@ def my_env_cfg(play: bool = False):
 
 Observation terms are entries in `cfg.observations[group].terms` — plain
 functions `(env) -> tensor`, addable per group (`"proprioception"` for the
-safety policy, `"actor"` for a nominal). Margins may read sensors directly
+safety policy, `"actor"` for a task policy). Margins may read sensors directly
 (`env.scene["feet_ground_contact"].data.current_contact_time`), and
 certificate features should be **state-only** (no commands, no action
 history) — see `features.py` for why (OOD at filter handover otherwise).
@@ -116,8 +122,9 @@ class MyGapTerrainCfg(SubTerrainCfg):
 ```
 
 Wire it via the terrain generator's `sub_terrains` dict in your cfg builder.
-`difficulty` (0..1) is driven by the curriculum; pin it for eval by setting
-`gap_width_range=(w, w)` (see `examples/eval_filter.py`). Curriculum
+`difficulty` (0–1) is driven by the curriculum; pin it for eval by setting
+`gap_width_range=(w, w)` (see the `gap_gauntlet` eval preset in
+`envs/go2_gap/eval_gauntlet.py`). Curriculum
 promotion predicates must measure **composed task success** — promoting on
 timeouts alone gets exploited by standing still.
 
@@ -138,7 +145,7 @@ Contact information enters three ways, all shown in shipped tasks:
 
 ## Checklist for a new robot
 
-`envs/assets_go2/` (quadruped) and `envs/assets_digit/` (humanoid, with
+`envs/assets/go2/` (quadruped) and `envs/assets/digit/` (humanoid, with
 closed kinematic loops and payload variants) are the two references:
 
 1. `envs/assets_<robot>/xmls/<robot>.xml` + meshes; strip floor/lights (the
@@ -147,7 +154,7 @@ closed kinematic loops and payload variants) are the two references:
    action scales), `get_<robot>_robot_cfg()`.
 3. Env builders under `envs/<robot>_<task>/`; margins next to them or in a
    task module under `tasks/`.
-4. `TaskSpec` registrations (+ a `kind="nominal"` dense twin under
-   `nominal/` if you'll run filters).
+4. `TaskSpec` registrations (+ a `mode="cumulative"` dense twin next to them
+   in the same `tasks/` module if you'll run filters).
 5. Verify: import + `list_tasks()`, cfg construction both modes, one
    `make_tensor(..., num_envs=8)` reset/step on GPU.

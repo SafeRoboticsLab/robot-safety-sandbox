@@ -238,7 +238,7 @@ def g_digit_stabilize(env) -> torch.Tensor:
   start from the avoid base is in-distribution), then the stance tightens.
 
   Train with an AVOID learner on ``compose(g_digit_stabilize)`` — no l at all:
-  SafetyPPO (single-player) or IsaacsPPO (two-player, ``--adversary``). Do NOT
+  SafetyPPO1P, or SafetyPPO2P with ``--adversary``. Do NOT
   hand this to a reach-avoid learner with a constant l to "emulate" avoid: that
   is provably impossible under the corrected anchor (see zoo margins.py).
   """

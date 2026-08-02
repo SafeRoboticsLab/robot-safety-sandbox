@@ -63,7 +63,7 @@ from robot_safety_sandbox.envs.go2_crawl.env_cfg import (
 
 # --- geometry / margin constants ----------------------------------------------
 # Trunk half-height, MEASURED from the Go2 base collision box (base1_collision
-# half-size z = 0.057 in envs/assets_go2/xmls/go2.xml, centred on base_link);
+# half-size z = 0.057 in envs/assets/go2/xmls/go2.xml, centred on base_link);
 # at the 0.32 m standing height this puts the trunk top at ~0.377 m, matching the
 # crawl lineage's "trunk-top ~0.38". (The directive estimated 0.10-0.12; the
 # measured box is smaller, and the crawl code base is consistent with ~0.06.)

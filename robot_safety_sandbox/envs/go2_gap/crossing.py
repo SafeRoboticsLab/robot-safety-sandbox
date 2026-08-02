@@ -2,11 +2,11 @@
 landing to the launch.
 
 Every env starts at ``back_level=0`` = the landing state (apex over the gap,
-full clearing velocity — the sub-skill SafetyPPO already learns). An env that
+full clearing velocity — the sub-skill the avoid learner already learns). An env that
 reaches the far platform upright is promoted to spawn *further back* along the
 arc (toward a committed launch off the near edge); one that fails is demoted.
 So the working landing bootstraps the launch, per-env, like the terrain-level
-curriculum. Avoid-only ``g`` (SafetyPPO) still forces it because every level
+curriculum. Avoid-only ``g`` (mode="safety") still forces it because every level
 spawns airborne-committed over the gap (falling in -> g<0), so standing is never
 an option. Meant for large ``num_envs`` (mjlab parallelism).
 

@@ -1,0 +1,23 @@
+# ReachAvoidPPO1P on go2_stabilize: M=ReachAvoid (the task's mode), A=PPO
+# (family: on_policy), P=1P (no adversary). The safety-PPO recipe:
+# obs-normalized, fixed LR, KL early-stop, capped action std.
+#   python examples/train.py --config configs/go2_stabilize_reachavoidppo1p.yaml
+# (add `adversary: true` for ReachAvoidPPO2P — the alternating best-response
+# game, structurally different from ReachAvoidSAC2P; see docs/API.md.)
+family: on_policy        # PPO family — the train.py router reads this
+task: go2_stabilize
+num_envs: 1024
+steps: 100000000
+seed: 0
+
+# --- safety-PPO recipe ---
+lr: 1.0e-4
+adaptive_lr: false           # fixed LR (--no-adaptive-lr) for the sparse safety signal
+target_kl: 0.01              # early-stop actor epochs at this KL
+ent_coef: 1.0e-3
+max_std: 0.4                 # cap the action std (prevents entropy runaway)
+net: "128,128,128"           # safety net width
+terminal_type: all           # value a terminal step as min(l,g)
+
+# gamma annealing is ON by default (discrete jumps 0.99->0.9999); train.py does
+# not expose a gamma-schedule flag, so it uses the safety_sb3 default.

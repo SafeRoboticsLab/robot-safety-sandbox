@@ -2,34 +2,56 @@
 
     from robot_safety_sandbox import make_tensor, list_tasks
     env = make_tensor("go2_gap_chain", num_envs=2048)   # -> TensorVecEnv
-    model = ReachAvoidPPO("MlpPolicy", env, normalize_obs=True, ...)
+    model = ReachAvoidPPO1P("MlpPolicy", env, normalize_obs=True, ...)
 
 A :class:`TaskSpec` pins everything a benchmark run needs: the mjlab cfg
-builder (spawn events + curricula), the reach-avoid margins, action dims, the
-recommended learner, and the warm-start lineage (curriculum pipelines like
-landing -> crossing -> chain are first-class here — they are how the hard
-skills were actually learned).
+builder (spawn events + curricula), the reach-avoid margins, the action dims,
+and the task's ``mode``. Curriculum LINEAGE (landing -> crossing -> chain) is
+deliberately NOT a field here: it lives in ``docs/log/experiments.md``, which is
+where it is actually maintained.
 
-Two task KINDS live side by side (a full filter experiment needs both):
-  kind="safety"   margins (g, l) + a safety learner -> the certificate V(s) +
-                  fallback policy. FOUR learners, one per (problem, players)
-                  cell — the problem is a property of the TASK's margins, the
-                  player count is a property of the RUN (``--adversary``):
+Here's a MAP to navigate the codebase — **Mode. Algorithm. Players.**
 
-                                   avoid (no l)      reach-avoid (real l)
-                    single-player  SafetyPPO         ReachAvoidPPO
-                    two-player     IsaacsPPO         GameplayPPO
+    M = Mode       Safety | ReachAvoid | Cumulative    the Bellman operator
+    A = Algorithm  PPO | SAC | A2C | DQN               the RL update rule
+    P = Players    1P | 2P                             single-player | zero-sum
 
-                  ``default_algo`` picks the COLUMN (its problem is the task's
-                  problem); :func:`algo_name` picks the row from the run's
-                  ``adversary`` flag and returns the cell.
-                  NB ``IsaacsPPO``/``IsaacsSAC`` CHANGED MEANING in safety_sb3
-                  v0.2.0: they are now the two-player AVOID game (ISAACS eq. 7,
-                  no target set); the two-player reach-avoid learner they used
-                  to be is now ``GameplayPPO``/``GameplaySAC``.
-  kind="nominal"  the TASK policy a filter wraps: dense env reward + VANILLA
-                  SB3 (margin_fn=None; envs are auto-built in dense mode).
-                  Registered under nominal/, trained with train_nominal.py.
+A learner's NAME is those three letters concatenated in that order —
+``SafetyPPO1P``, ``ReachAvoidSAC2P`` — and :func:`algo_name` is that
+concatenation and nothing else. No lookup table, no per-task override:
+
+    M comes from the TASK   its ``mode`` (below), a property of its margins
+    A comes from the RUN    the trainer family (on_policy -> PPO, off_policy -> SAC)
+    P comes from the RUN    the ``--adversary`` flag
+
+Every task declares exactly one axis of its own, its ``mode`` — the safety_sb3
+BACKUP it is trained under (see :data:`MODES`):
+
+  mode="safety"       AVOID:       V = min(g, gamma V')          margins, no l
+  mode="reach-avoid"  REACH_AVOID: V = min(g, max(l, gamma V'))  margins with l
+  mode="cumulative"   CUMULATIVE:  V = r + gamma (1-d) V'        dense env reward,
+                      i.e. the plain-RL TASK policy a filter wraps (margin_fn=None;
+                      envs are auto-built in dense mode, trained with STOCK SB3).
+
+A full filter experiment needs both layers: a cumulative task policy (pi_task) and
+a safety task supplying the certificate V(s) + fallback.
+
+The two SAFETY modes give four learners per algorithm, one per (M, P) cell — the
+mode is a property of the TASK's margins, the player count a property of the RUN:
+
+                       avoid (no l)      reach-avoid (real l)
+        single-player  SafetyPPO1P       ReachAvoidPPO1P
+        two-player     SafetyPPO2P       ReachAvoidPPO2P
+
+``mode`` picks the COLUMN, ``--adversary`` the row. CUMULATIVE has no P axis at
+all: it is stock ``stable_baselines3`` (``"PPO"`` / ``"SAC"``, no suffix) and
+there is no two-player cumulative game.
+
+NB the 2P cell is a DIFFERENT ALGORITHM in the two families, not the same game
+with a different optimizer: ``*SAC2P`` is the minimax game on one shared
+joint-action critic ``Q(s, [a_ctrl, a_dstb])``, while ``*PPO2P`` is an
+alternating best-response approximation with two independent ``V(s)`` nets, two
+rollout buffers and a phase machine. See docs/API.md.
 """
 
 from __future__ import annotations
@@ -38,6 +60,28 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 _REGISTRY: dict[str, "TaskSpec"] = {}
+
+#: The task MODE = which safety_sb3 backup values a rollout of it. These values
+#: are duplicated as LITERALS from ``safety_sb3.backups`` ON PURPOSE: a
+#: CUMULATIVE-ONLY install (dense reward + vanilla SB3, no safety_sb3 — see
+#: base.py) must still import this registry, so this module never imports
+#: safety_sb3. ``tests/test_registry_mode.py`` asserts the two stay in sync
+#: whenever safety_sb3 IS importable.
+AVOID = "safety"               # backups.AVOID
+REACH_AVOID = "reach-avoid"    # backups.REACH_AVOID
+CUMULATIVE = "cumulative"      # backups.CUMULATIVE (plain RL: reward + gamma V')
+MODES = (AVOID, REACH_AVOID, CUMULATIVE)
+#: the modes that need margins (g, l) and a safety_sb3 learner
+SAFETY_MODES = (AVOID, REACH_AVOID)
+
+#: MAP letter **M** — mode -> the learner-name prefix that Bellman operator earns.
+#: CUMULATIVE earns none: it is stock stable_baselines3, not a safety_sb3 learner.
+_PREFIX = {AVOID: "Safety", REACH_AVOID: "ReachAvoid", CUMULATIVE: ""}
+#: MAP letter **A** — trainer family -> the algorithm it runs. The A slot also
+#: has A2C / DQN in principle; neither is wired to a trainer in this zoo yet.
+_ALG = {"on_policy": "PPO", "off_policy": "SAC"}
+#: the trainer families (``examples/train.py --family``)
+FAMILIES = tuple(_ALG)
 
 #: WHEN an episode ends, in terms of the task's (g, l) margins (g>=0 safe,
 #: l>=0 in-target). The ENV-side companion to the learner's ``terminal_type``
@@ -57,17 +101,16 @@ END_CRITERIA = ("failure", "reach-avoid", "timeout")
 class TaskSpec:
   task_id: str
   cfg_builder: Callable          # (play: bool) -> ManagerBasedRlEnvCfg
-  margin_fn: Optional[Callable] = None  # (env) -> (g, l); None for nominal
+  margin_fn: Optional[Callable] = None  # (env) -> (g, l); None for cumulative
   description: str = ""
   ctrl_dim: int = 12
-  dstb_dim: int = 3              # adversary force dims (ISAACS)
-  # Declares the task's PROBLEM via a learner name; algo_name() swaps in the
-  # two-player learner of the same problem when a run passes adversary=True.
-  # SafetyPPO | ReachAvoidPPO | IsaacsPPO | GameplayPPO | PPO (nominal).
-  default_algo: str = "SafetyPPO"
-  warmstart_from: Optional[str] = None  # previous pipeline stage task_id
+  dstb_dim: int = 3              # adversary force dims (two-player games)
+  # REQUIRED. Which BACKUP values this task: one of MODES. This is the task's
+  # whole say in the MAP — it supplies the **M**, and nothing else here names a
+  # learner. It also fixes whether the env is built in dense-reward mode and
+  # whether margins are required.
+  mode: Optional[str] = None
   supports_adversary: bool = False
-  kind: str = "safety"           # "safety" (margins) | "nominal" (dense task)
   # WHEN the episode ends from (g, l); one of END_CRITERIA. "failure" (default)
   # reproduces today's behavior for EVERY registered task — an audit (2026-07-17)
   # found none currently terminate on success. A run may override it via the
@@ -77,8 +120,18 @@ class TaskSpec:
   kwargs: dict = field(default_factory=dict)  # extra bridge kwargs
 
   def __post_init__(self):
-    if self.kind == "safety" and self.margin_fn is None:
-      raise ValueError(f"safety task '{self.task_id}' needs a margin_fn")
+    if self.mode is None:
+      raise ValueError(
+        f"task '{self.task_id}' declares no mode=; every task must name the "
+        f"backup it trains under, one of {MODES}. The learner is DERIVED from "
+        f"it (see algo_name), so there is nothing else to declare.")
+    if self.mode not in MODES:
+      raise ValueError(f"task '{self.task_id}' has mode={self.mode!r}; "
+                       f"must be one of {MODES}")
+    if self.mode != CUMULATIVE and self.margin_fn is None:
+      raise ValueError(
+        f"task '{self.task_id}' is mode={self.mode!r} and needs a margin_fn "
+        f"(only mode={CUMULATIVE!r} trains without margins, on dense reward)")
     if self.end_criterion not in END_CRITERIA:
       raise ValueError(
         f"task '{self.task_id}' has end_criterion={self.end_criterion!r}; "
@@ -91,9 +144,12 @@ def register(spec: TaskSpec) -> None:
   _REGISTRY[spec.task_id] = spec
 
 
-def list_tasks(kind: Optional[str] = None) -> list[str]:
+def list_tasks(mode: Optional[str] = None) -> list[str]:
+  """Registered task ids, optionally filtered to one :data:`MODES` entry."""
+  if mode is not None and mode not in MODES:
+    raise ValueError(f"list_tasks: unknown mode={mode!r}; one of {MODES}")
   return sorted(t for t, s in _REGISTRY.items()
-                if kind is None or s.kind == kind)
+                if mode is None or s.mode == mode)
 
 
 def spec(task_id: str) -> TaskSpec:
@@ -105,58 +161,56 @@ def spec(task_id: str) -> TaskSpec:
   return _REGISTRY[task_id]
 
 
-AVOID = "avoid"
-REACH_AVOID = "reach-avoid"
+def algo_name(task_id: str, adversary: bool = False,
+              family: str = "on_policy") -> str:
+  """The learner CLASS NAME for running ``task_id`` — the MAP, spelled out.
 
-#: which PROBLEM (backup) each learner solves — ``default_algo`` names one of
-#: these, and that is what fixes the task's problem; the player count comes from
-#: the run. Mirrors safety_sb3.backups: avoid anchors on g, reach-avoid on
-#: min(l, g).
-_ALGO_PROBLEM = {
-  "SafetyPPO": AVOID,           "IsaacsPPO": AVOID,          # ISAACS eq. 7
-  "ReachAvoidPPO": REACH_AVOID, "GameplayPPO": REACH_AVOID,  # Gameplay eq. 6a
-}
-#: (problem, n_players) -> learner
-_LEARNER = {
-  (AVOID, 1): "SafetyPPO",       (AVOID, 2): "IsaacsPPO",
-  (REACH_AVOID, 1): "ReachAvoidPPO", (REACH_AVOID, 2): "GameplayPPO",
-}
+  It is a FORMULA, not a lookup: **M**ode + **A**lgorithm + **P**layers,
+  concatenated. Nothing in the registry can override it; a task supplies only
+  its ``mode``.
 
+      algo_name("go2_stabilize")                            -> ReachAvoidPPO1P
+      algo_name("go2_stabilize", adversary=True)            -> ReachAvoidPPO2P
+      algo_name("go2_stabilize", family="off_policy")       -> ReachAvoidSAC1P
+      algo_name("digit_stabilize_avoid", adversary=True)    -> SafetyPPO2P
 
-def algo_name(task_id: str, adversary: bool = False) -> str:
-  """The learner CLASS NAME for running ``task_id`` (names only — this module
-  never imports safety_sb3, so the registry stays importable without it).
+  Names only — this module never imports safety_sb3, so a cumulative-only
+  install (dense reward + vanilla SB3, see base.py) still imports the registry.
 
-  The task's margins fix the PROBLEM (avoid vs reach-avoid); ``adversary`` fixes
-  the PLAYER COUNT. Resolving both together is what keeps the 2x2 honest — the
-  old code hardcoded IsaacsPPO for every adversarial run, which since safety_sb3
-  v0.2.0 (where that name means the AVOID game) would silently turn every
-  reach-avoid task into an avoid game.
+  mode=CUMULATIVE returns the bare algorithm (``"PPO"`` / ``"SAC"``): the
+  plain-RL task policy trains with STOCK stable_baselines3, which keeps the
+  checkpoint a vanilla SB3 zip. It has no P axis — there is no two-player
+  cumulative game.
 
-  Also refuses the one pairing that is silently wrong: a reach-avoid learner on
-  an avoid-only task (no target set). Pinning l to a constant does NOT make the
-  reach-avoid backup compute the avoid value — a negative l empties the safe
-  set, a non-negative one strips the lookahead — so it has no valid formulation
-  and must not be reachable by accident. See margins.py.
+  Two pairings are refused rather than resolved:
+
+  * a two-player CUMULATIVE run — no such game exists;
+  * a reach-avoid learner on an avoid-only task (no target set). Pinning l to a
+    constant does NOT make the reach-avoid backup compute the avoid value — a
+    negative l empties the safe set, a non-negative one strips the lookahead —
+    so it has no valid formulation and must not be reachable by accident. See
+    margins.py.
   """
+  if family not in _ALG:
+    raise ValueError(f"unknown family={family!r}; one of {FAMILIES}")
   s = spec(task_id)
-  if s.default_algo not in _ALGO_PROBLEM:
-    raise ValueError(
-      f"task '{task_id}' declares default_algo='{s.default_algo}', which is "
-      f"not a safety learner; known: {sorted(_ALGO_PROBLEM)}")
   if adversary and not s.supports_adversary:
     raise ValueError(f"task '{task_id}' does not define an adversary")
-  problem = _ALGO_PROBLEM[s.default_algo]
+  if adversary and s.mode == CUMULATIVE:
+    raise ValueError(f"task '{task_id}' is mode={CUMULATIVE!r}: there is no "
+                     f"two-player cumulative learner")
   # margin_fns built by margins.compose/avoid_only carry has_target; anything
   # else (task-local margin builders) is assumed to declare a real l.
-  if problem == REACH_AVOID and not getattr(s.margin_fn, "has_target", True):
+  if s.mode == REACH_AVOID and not getattr(s.margin_fn, "has_target", True):
     raise ValueError(
       f"task '{task_id}' is AVOID-ONLY (its margin_fn declares no target set) "
-      f"but declares the reach-avoid learner '{s.default_algo}'. Avoid is not "
-      f"a reach-avoid instance for ANY constant l — declare SafetyPPO (avoid; "
-      f"--adversary then gives the two-player IsaacsPPO), or give the task a "
-      f"real reach margin l. See margins.py / safety_sb3 RELEASE_NOTES v0.2.0.")
-  return _LEARNER[(problem, 2 if adversary else 1)]
+      f"but declares mode={REACH_AVOID!r}. Avoid is not a reach-avoid instance "
+      f"for ANY constant l — declare mode={AVOID!r} (--adversary then gives the "
+      f"two-player Safety{_ALG[family]}2P), or give the task a real reach "
+      f"margin l. See margins.py.")
+  if s.mode == CUMULATIVE:
+    return _ALG[family]                      # stock stable_baselines3, 1 player
+  return f"{_PREFIX[s.mode]}{_ALG[family]}{'2P' if adversary else '1P'}"
 
 
 def make_tensor(task_id: str, num_envs: int = 2048, device: str = "cuda:0",
@@ -175,7 +229,7 @@ def make_tensor(task_id: str, num_envs: int = 2048, device: str = "cuda:0",
   s = spec(task_id)
   if adversary and not s.supports_adversary:
     raise ValueError(f"task '{task_id}' does not define an adversary")
-  kw.setdefault("dense_reward", s.kind == "nominal")  # nominal => dense
+  kw.setdefault("dense_reward", s.mode == CUMULATIVE)  # cumulative => dense
   ec = end_criterion if end_criterion is not None else s.end_criterion
   return MjlabTensorSafetyEnv(
     num_envs, device, cfg_builder=s.cfg_builder, margin_fn=s.margin_fn,
@@ -196,7 +250,7 @@ def make_numpy(task_id: str, num_envs: int = 64, device: str = "cuda:0",
   s = spec(task_id)
   if adversary and not s.supports_adversary:
     raise ValueError(f"task '{task_id}' does not define an adversary")
-  kw.setdefault("dense_reward", s.kind == "nominal")  # nominal => dense
+  kw.setdefault("dense_reward", s.mode == CUMULATIVE)  # cumulative => dense
   ec = end_criterion if end_criterion is not None else s.end_criterion
   return MjlabNumpySafetyEnv(
     num_envs, device, cfg_builder=s.cfg_builder, margin_fn=s.margin_fn,

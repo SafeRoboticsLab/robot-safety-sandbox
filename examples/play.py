@@ -8,17 +8,20 @@ is the ~30-line adapter between the two, plus checkpoint loading — so any trai
 policy opens in the same pause / single-step / speed / env-cycle viewer the
 unitree_rl_mjlab ``scripts/play.py`` uses.
 
+``--algo`` is the MAP name the checkpoint was trained as: Mode (Safety |
+ReachAvoid) + Algorithm (PPO | SAC) + Players (1P | 2P).
+
   # PPO single-player (loads + plays on the same adversary-off env)
-  python examples/play.py --task car_goal --algo ReachAvoidPPO --run runs/car_goal
+  python examples/play.py --task car_goal --algo ReachAvoidPPO1P --run runs/car_goal
 
   # two-player SAC: load with the adversary on (to match the saved [ctrl,dstb]
   # action space), then play the DEPLOYABLE ctrl policy with the adversary off
-  python examples/play.py --task go2_stabilize --algo GameplaySAC \
-      --run runs/go2_stabilize_gameplaysac
+  python examples/play.py --task go2_stabilize --algo ReachAvoidSAC2P \
+      --run runs/go2_stabilize_reachavoidsac2p
 
   # ... or drive the LEARNED disturbance too -> watch it resist the worst-case force
-  python examples/play.py --task go2_stabilize --algo GameplaySAC \
-      --run runs/go2_stabilize_gameplaysac --adversary
+  python examples/play.py --task go2_stabilize --algo ReachAvoidSAC2P \
+      --run runs/go2_stabilize_reachavoidsac2p --adversary
 
   --viewer native  (a MuJoCo window; needs $DISPLAY). Also lets you SHOVE the robot
                    by hand: double-click a body, then Ctrl+drag (right = force,
@@ -43,8 +46,10 @@ from robot_safety_sandbox import make_tensor  # noqa: E402
 # Two-player learners were trained on a [ctrl, dstb] action space; the checkpoint
 # must be loaded against an adversary=True env so the saved shapes line up. The
 # PLAY env is always adversary-off -- we show the deployable ctrl policy (exactly
-# what train_gameplay_sac's VideoWandbCallback renders).
-_TWO_PLAYER = ("IsaacsPPO", "IsaacsSAC", "GameplayPPO", "GameplaySAC")
+# what the trainers' VideoWandbCallback renders). The P letter of the MAP is the
+# whole test, so it is a suffix check, not a table.
+_ALGOS = ("SafetyPPO1P", "SafetyPPO2P", "ReachAvoidPPO1P", "ReachAvoidPPO2P",
+          "SafetySAC1P", "SafetySAC2P", "ReachAvoidSAC1P", "ReachAvoidSAC2P")
 
 
 class _PlayEnv:
@@ -99,7 +104,7 @@ class _Policy:
   isaacs.py's tensor rollout: ``cat([ctrl_actor(o), dstb_actor(o)])``, actions
   already in [-1, 1], the env clamps).
 
-  ``stock=True`` is a vanilla SB3 PPO checkpoint (a kind="nominal" bridge/walker,
+  ``stock=True`` is a vanilla SB3 PPO checkpoint (a mode="cumulative" bridge/walker,
   trained on the numpy path): obs stats come from ``vecnormalize.pkl`` and actions
   from ``model.predict`` (numpy), not the safety_sb3 tensor policy."""
 
@@ -149,11 +154,10 @@ def main():
   ap = argparse.ArgumentParser(description=__doc__,
                                formatter_class=argparse.RawDescriptionHelpFormatter)
   ap.add_argument("--task", required=True)
-  ap.add_argument("--algo", required=True, choices=[
-      "SafetyPPO", "ReachAvoidPPO", "IsaacsPPO", "GameplayPPO",
-      "SafetySAC", "ReachAvoidSAC", "IsaacsSAC", "GameplaySAC", "PPO"],
-      help="the learner CLASS the checkpoint was trained as ('PPO' = a vanilla "
-           "SB3 nominal bridge/walker on the numpy path)")
+  ap.add_argument("--algo", required=True, choices=[*_ALGOS, "PPO"],
+      help="the learner CLASS the checkpoint was trained as, Mode+Algorithm+"
+           "Players ('PPO' = a vanilla SB3 mode='cumulative' task policy on the "
+           "numpy path)")
   ap.add_argument("--run", help="run dir holding final_model.zip + tensornormalize.pt")
   ap.add_argument("--load", help="explicit path to a model .zip (overrides --run)")
   ap.add_argument("--num-envs", type=int, default=4, help="herd size to render")
@@ -188,11 +192,11 @@ def main():
     print(f"[play] env overrides: {cfg_overrides}")
 
   stock = args.algo == "PPO"
-  load_adv = args.algo in _TWO_PLAYER
+  load_adv = args.algo.endswith("2P")
   if args.adversary and not load_adv:
     ap.error(f"--adversary needs a two-player checkpoint; {args.algo} is single-player")
   show_adv = bool(args.adversary)
-  mode = ("nominal walker (stock PPO)" if stock else
+  mode = ("cumulative task policy (stock PPO)" if stock else
           "ctrl + learned worst-case disturbance" if show_adv else
           "deployable ctrl policy (adversary off)")
   print(f"[play] {args.task} | {args.algo} | play mode: {mode}")

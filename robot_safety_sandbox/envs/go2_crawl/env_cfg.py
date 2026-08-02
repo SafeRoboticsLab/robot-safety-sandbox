@@ -389,7 +389,7 @@ def _add_bar_perception(cfg: ManagerBasedRlEnvCfg) -> None:
 
 # =============================================================================
 # PHASE 1 -- crouch-crawl LOCOMOTION (the "crossing" analog of gap-jumping).
-# Objective is velocity-tracking (ReachAvoidPPO), NOT rest: avoid-only/rest lets
+# Objective is velocity-tracking (mode="reach-avoid"), NOT rest: avoid-only/rest lets
 # the robot succeed by stopping, so the crouch-crawl motor skill never forms
 # (diagnosed on the single-stage run). Here l rewards SUSTAINED forward motion,
 # so the only way to score is to crawl THROUGH. Momentum init + a height
@@ -463,7 +463,7 @@ def reset_forced_crossing(env, env_ids, asset_cfg=SceneEntityCfg("robot")):
 
 
 # =============================================================================
-# DUCK sub-task (avoid-only, SafetyPPO): approach a low bar with momentum; some
+# DUCK sub-task (avoid-only, mode="safety"): approach a low bar with momentum; some
 # spawns are STOPPABLE (brake before the bar) and some are UNSTOPPABLE (fast +
 # close, so braking would collide -> the ONLY safe option is to DUCK). The
 # robot learns brake-if-stoppable / duck-if-committed purely to stay safe --
@@ -918,7 +918,7 @@ def crawl_locomote_height_levels(env, env_ids):
 def unitree_go2_crawl_locomote_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Phase 1: crouch-crawl LOCOMOTION on passable bars. Momentum-init approach,
   height curriculum high->low, NO rest window / crouch seed / handover / stop.
-  Pair with crawl_locomote_margins (velocity-tracking l) via ReachAvoidPPO."""
+  Pair with crawl_locomote_margins (velocity-tracking l) via ReachAvoidPPO1P."""
   cfg = unitree_go2_crawl_env_cfg(play=play)
   # FORCE THE MOTION: committed mid-gait spawns + a reverse spatial curriculum
   # so "stand still" is never an option (the gap-crossing recipe). The bar

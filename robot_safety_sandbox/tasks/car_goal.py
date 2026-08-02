@@ -6,7 +6,7 @@ controls, ended on reach (g >= 0 AND l >= 0) or collision.
 
 from __future__ import annotations
 
-from ..registry import TaskSpec, register
+from ..registry import REACH_AVOID, TaskSpec, register
 
 
 def register_all() -> None:
@@ -16,7 +16,7 @@ def register_all() -> None:
   )
   register(TaskSpec(
     task_id="car_goal", cfg_builder=car_goal_env_cfg, margin_fn=car_margins,
-    ctrl_dim=2, default_algo="ReachAvoidPPO", supports_adversary=False,
+    ctrl_dim=2, mode=REACH_AVOID, supports_adversary=False,
     end_criterion="reach-avoid",
     kwargs={"ctrl_gain": 1.0, "adversary_body": "agent"},
     description="Differential-drive car reach-avoid: drive to the goal disk "

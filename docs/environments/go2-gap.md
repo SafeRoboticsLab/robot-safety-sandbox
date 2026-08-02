@@ -8,17 +8,34 @@ filtering livelocks and reach-avoid is needed.
 
 ![go2 gap rollout](assets/go2_gap_crossing.gif){ width="520" }
 
+## Status and requirements
+
+| | |
+|---|---|
+| Maturity | **Research** (a shipped result; forms only through staged warm-starts at real scale) |
+| Requires | stock mjlab sim stack; NVIDIA GPU |
+| Adversary | `go2_gap_chain_isaacs` (`--adversary` → `ReachAvoidPPO2P`) |
+| Action | 12 joint targets (`ctrl_dim=12`); adversary = 3-dim base wrench |
+| Training budget | large — the chain forms its jump only near ~2B env-steps; watch the `env/Curriculum/*` logger keys |
+
+**Success / failure.** Failure (`g < 0`) is a fall or stalling airborne over the
+pit; success (`l ≥ 0`) is arriving past the gap at a stable stop on the far
+platform. The jump is a *committed* maneuver — once airborne over the pit, braking
+is fatal — which is exactly where avoid-only filtering livelocks and reach-avoid is
+needed.
+
 ## The pipeline
 
 The jump does not emerge from scratch — it forms through staged warm-starts
-(`TaskSpec.warmstart_from`), each stage seeding a rare-win skill for the next:
+(a `--load` per stage; the lineage is recorded in the experiment log, not in the
+registry), each stage seeding a rare-win skill for the next:
 
 | task | objective | learner | warm-starts from |
 |---|---|---|---|
-| `go2_gap_landing` | soft-land from mid-air over the gap | `SafetyPPO` (avoid) | — |
-| `go2_gap_crossing` | reverse curriculum: landing → launch | `SafetyPPO` (avoid) | landing |
-| `go2_gap_chain` | arrival momentum → brake-or-jump → safe rest | `ReachAvoidPPO` | crossing |
-| `go2_gap_chain_isaacs` | chain + worst-case base-force adversary | `GameplayPPO` | chain |
+| `go2_gap_landing` | soft-land from mid-air over the gap | `SafetyPPO1P` (avoid) | — |
+| `go2_gap_crossing` | reverse curriculum: landing → launch | `SafetyPPO1P` (avoid) | landing |
+| `go2_gap_chain` | arrival momentum → brake-or-jump → safe rest | `ReachAvoidPPO1P` | crossing |
+| `go2_gap_chain_isaacs` | chain + worst-case base-force adversary | `ReachAvoidPPO2P` | chain |
 
 ## The split test — reach-avoid vs avoid, one variable
 
@@ -28,11 +45,12 @@ optimizer — and differ in exactly one variable: whether a reach term `l` is pr
 
 | task | learner | reach term |
 |---|---|---|
-| `go2_gap_brake_or_jump_avoid` (`_w20`, `_w30`) | `SafetyPPO` | none (`compose(g)`) |
-| `go2_gap_brake_or_jump_ra` (`_w20`, `_w30`) | `ReachAvoidPPO` | `l_stable_far` (`compose(g, l)`) |
+| `go2_gap_brake_or_jump_avoid` (`_w20`, `_w30`) | `SafetyPPO1P` | none (`compose(g)`) |
+| `go2_gap_brake_or_jump_ra` (`_w20`, `_w30`) | `ReachAvoidPPO1P` | `l_stable_far` (`compose(g, l)`) |
 
-`brake_or_jump_harvest.py` collects real jump states into a bank; `brake_or_jump.py` replays them
-on a reverse curriculum whose final level is a decision mixture (far+slow "runway",
+`brake_or_jump_harvest.py` collects real jump states into a bank;
+`brake_or_jump.py` replays them on a reverse curriculum whose final level is a
+decision mixture (far+slow "runway",
 near+fast "committed", near+slow "stoppable"). Widths `_w20`/`_w30` widen the gap
 (0.12 → 0.20 → 0.30 m) up a warm-started chain.
 
@@ -40,15 +58,15 @@ near+fast "committed", near+slow "stoppable"). Widths `_w20`/`_w30` widen the ga
 
 Under the corrected reach-avoid anchor (`min(l, g)`; see
 [release notes](https://github.com/SafeRoboticsLab/safety-stable-baselines)), the
-reach-avoid twin **initiates the crossing from a standstill** — 100 % crossing at
-every spawn momentum, at all three gap widths, with ~0–1 % falls — while the
+reach-avoid twin **initiates the crossing from a standstill** — 100% crossing at
+every spawn momentum, at all three gap widths, with ~0–1% falls — while the
 avoid twin (and a reach-avoid twin trained under the old `g`-anchor) stalls at low
 momentum and its critic over-certifies the non-crossing state. The value is *lower*
 but sound: every point of it is backed by a realized safe crossing.
 
 ## Live safety filter — defer, then jump
 
-Wrap the blind flat walker in a value-shield filter built from each twin's `V(s)`
+Wrap the blind flat walker in a safety value filter built from each twin's `V(s)`
 + fallback policy. The robot starts back from the edge and walks forward:
 
 ![safety filter: RA defers then jumps](assets/go2_gap_filter.gif){ width="520" }
@@ -75,26 +93,51 @@ See [`robot_safety_sandbox/margins.py`](../reference.md#margins) and
 ```bash
 # reach-avoid chain (single-player)
 python examples/train.py --family on_policy --task go2_gap_chain
-# + worst-case force adversary (two-player reach-avoid -> GameplayPPO)
-python examples/train.py --family on_policy --task go2_gap_chain --adversary
+# + worst-case force adversary (two-player reach-avoid -> ReachAvoidPPO2P);
+# use the adversarial task id -- go2_gap_chain has supports_adversary=False
+python examples/train.py --family on_policy --task go2_gap_chain_isaacs --adversary
 
-# split test: reach-avoid vs avoid twins, per gap width
+# split test: reach-avoid vs avoid twins, per-gap-width
 python examples/train.py --family on_policy --task go2_gap_brake_or_jump_ra   --load runs/go2_gap_crossing/final_model.zip
 python examples/train.py --family on_policy --task go2_gap_brake_or_jump_avoid --load runs/go2_gap_crossing/final_model.zip
 
-# evaluate: value ordering + cross/fall rates, and the live safety filter
+# evaluate: the critic's value ordering across a momentum sweep
 python examples/eval_brake_or_jump_value.py --task go2_gap_brake_or_jump_ra_w30 \
     --ra-model runs/<ra_run>/final_model.zip --avoid-model runs/<avoid_run>
-python examples/eval_brake_or_jump_filter.py --safety runs/<ra_run>/final_model.zip \
-    --spawn-x-rel -0.8 --cmd-vx 0.85 --out ra.mp4
+# the live safety filter: the blind walker approaching the gap, filtered
+python examples/eval.py --preset gap_gauntlet --task go2_gap_brake_or_jump_ra_w30 \
+    --safety-policy runs/<ra_run>/final_model.zip --task-policy runs/go2_walker_flat/final_model.zip \
+    --spawn-x -0.8 -0.8 --cmd-vx 0.85 --island-length 3.0 --gap-full-pose \
+    --gap-x 0.0 --rest-x 1.2 --num-envs 6 --video ra.mp4
 ```
 
 ```python
 from robot_safety_sandbox import make_tensor, algo_name
 env = make_tensor("go2_gap_chain", num_envs=2048)     # ~50k steps/s on 12 GB
-# algo_name("go2_gap_chain") -> "ReachAvoidPPO";  (..., adversary=True) -> "GameplayPPO"
+# algo_name("go2_gap_chain") -> "ReachAvoidPPO1P";  (..., adversary=True) -> "ReachAvoidPPO2P"
 ```
 
 The gap family forms its jump only at real scale (~2B env-steps for the chain);
 watch the `env/Curriculum/*` logger keys — a stalled curriculum looks exactly
 like converged training in the reward curve.
+
+## Visualize
+
+```bash
+python examples/play.py --task go2_gap_chain --algo ReachAvoidPPO1P --run runs/go2_gap_chain
+```
+
+## Known limitations
+
+- The shipped result ran at reduced scale (1024 envs, not 2048); a scale-matched
+  rerun is the outstanding validation for a paper figure.
+- The jump depends on the staged warm-start pipeline — training `go2_gap_chain`
+  from scratch does not form it.
+- Evaluation is not bit-reproducible; compare configurations over several runs.
+
+## Related source files
+
+- `robot_safety_sandbox/tasks/go2_gap.py`, `robot_safety_sandbox/tasks/go2_gap_brake_or_jump.py` — task registrations.
+- `robot_safety_sandbox/envs/go2_gap/` — env cfgs, the harvest/replay pipeline, and margins.
+- `robot_safety_sandbox/envs/go2_gap/eval_gauntlet.py` — the `gap_gauntlet` eval preset.
+- `examples/eval_brake_or_jump_value.py` — the critic value-ordering probe.

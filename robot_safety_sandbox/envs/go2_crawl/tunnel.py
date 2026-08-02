@@ -87,8 +87,10 @@ def _disallowed_ground_contact(env, nonfoot_name="nonfoot_ground_touch"):
     sensor = env.scene[nonfoot_name]
   except KeyError:
     return false
-  force = (sensor.data.force_history
-           if sensor.data.force_history is not None else sensor.data.force)
+  hist = sensor.data.force_history
+  if getattr(env, "_zoo_instantaneous_contact", False):
+    hist = None            # rollout shadow sim, see margins.g_terrain_relative
+  force = hist if hist is not None else sensor.data.force
   if force is None:
     return false
   mag = torch.norm(force, dim=-1)

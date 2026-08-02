@@ -1,0 +1,37 @@
+# Go2 velocity walker trained INSIDE a safety filter — the "filtered (treatment)
+# arm". A cumulative task policy learns on the env's dense reward while every
+# proposed action is certified by a safety filter built from a fallback twin;
+# the EXECUTED action is what enters the replay buffer (an off-policy / SAC
+# contract). This is the PORL setting; see docs/safety-filter-training.md.
+#
+#   python examples/train.py --config configs/go2_walker_filtered.yaml
+#
+# The CONTROL arm is the same recipe WITHOUT the safety_filter block (drop it, or
+# clear it with `--safety-filter safety_policy=`); both arms count failures the
+# same way via the base env's always-on safety/* counters. Label A/B cells with
+# `--run-suffix`.
+family: off_policy          # SAC family — filtered training needs the off-policy
+                            # executed-action readback (train.py reads this key)
+task: go2_walker_filtered   # mode=cumulative + dense_margins -> CumulativeSAC1P
+num_envs: 1024
+steps: 100000000
+seed: 0
+
+# --- the safety filter the policy trains inside (the treatment arm) ---
+safety_filter:
+  # the fallback twin whose filter you train inside (a go2_stabilize
+  # ReachAvoidSAC2P checkpoint — the E049/E051 twin). Point this at your own
+  # trained twin; omit the whole block for the unfiltered control arm.
+  safety_policy: runs/go2_stabilize_reachavoidsac2p/final_model.zip
+  filter: critic            # Safety Critic Filter: Q(s, u_nom) from the SAC twin
+  eps: 0.1                  # switching threshold (the least-restrictive
+                            # zero-failure knee from the epsilon sweep)
+  smoothing: false          # canonical LeastRestrictiveIntervention (not the
+                            # non-canonical HeuristicSmoothing variant)
+
+# --- recipe (mirrors the E058 treatment recipe: g64 + a held-open alpha) ---
+gradient_steps: 64          # load-bearing for throughput/quality (E059)
+target_entropy: -3          # holds exploration open; 'auto' (=-12) collapses the
+                            # walker to a standstill (E056)
+max_alpha: 1.0              # ceiling on the entropy temperature (E058)
+video_interval: 5000000
