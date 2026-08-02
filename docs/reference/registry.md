@@ -31,12 +31,17 @@ TaskSpec(
 |---|---|---|---|
 | `"safety"` | `V = min(g, γV′)` | `margin_fn` required, no `l` | `Safety*` |
 | `"reach-avoid"` | `V = min(g, max(l, γV′))` | `margin_fn` required, real `l` | `ReachAvoid*` |
-| `"cumulative"` | `V = r + γ(1−d)V′` | none (`margin_fn=None`) | stock `PPO` / `SAC` |
+| `"cumulative"` | `V = r + γ(1−d)V′` | none (`margin_fn=None`) | on-policy: stock SB3 `PPO`; off-policy: `safety_sb3.CumulativeSAC1P` |
 
 `mode="cumulative"` is plain reward-maximizing RL — the task policy `π_task` a
-safety filter wraps. Its envs are auto-built in dense-reward mode and it trains
-with **stock SB3**, keeping the checkpoint a vanilla SB3 zip that loads without
-`safety_sb3`. There is no `default_algo` and no `warmstart_from` field: the learner
+safety filter wraps. Its envs are auto-built in dense-reward mode. On the
+on-policy family it trains with **stock `stable_baselines3.PPO`** (numpy bridge),
+keeping the checkpoint a vanilla SB3 zip that loads without `safety_sb3`; on the
+off-policy family it trains with **`safety_sb3.CumulativeSAC1P`** (tensor path) —
+stock SAC lacks the GPU tensor collector and executed-action readback filtered
+training needs, so the cumulative SAC learner is the safety_sb3 class, though its
+checkpoint stays an SB3-compatible SAC zip. There is no two-player cumulative
+game. There is no `default_algo` and no `warmstart_from` field: the learner
 name is computed (see [the MAP](../concepts/map.md)); warm-start lineage is a
 run-level `--load` choice.
 

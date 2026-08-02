@@ -6,6 +6,9 @@ edit_uri: edit/main/
 
 theme:
   name: material
+  icon:
+    logo: material/robot   # the robot zoo — the sandbox's identity
+  favicon: assets/favicon.svg
   features:
     - navigation.sections
     - navigation.top
@@ -33,6 +36,8 @@ extra_javascript:
 
 exclude_docs: |
   log/
+  website_audit.md
+  website_audit_round2.md
 
 plugins:
   - search

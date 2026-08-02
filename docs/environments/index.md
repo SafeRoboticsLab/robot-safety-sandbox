@@ -60,7 +60,14 @@ crawl thread).
 | `go2_stabilize` | Go2 | reach-avoid | stand / stay upright vs adversarial base force | ✔ | **Stable** |
 | `go2_locomote` | Go2 | reach-avoid | track a velocity command vs adversarial force | ✔ | Research |
 | `go2_walker_flat` | Go2 | cumulative | dense-reward flat walker — the task policy filters wrap | — | **Stable** |
-| `go2_walker_filtered` | Go2 | cumulative | task policy trained *inside* a filter (PORL showcase) | ✔ | Research |
+| `go2_walker_filtered` | Go2 | cumulative | task policy trained *inside* a filter (PORL showcase) | eval only¹ | Research |
+
+The **Adversary** column: ✔ means the task supports adversarial *training*
+(`--adversary` resolves a two-player `*2P` learner). ¹`go2_walker_filtered` is
+`cumulative`, so it has **no** two-player learner — the trainer refuses
+`--adversary`. Its `supports_adversary=True` only exposes an **eval-time
+disturbance channel** (a live `--dstb` / `--dstb-scale` attack in
+`examples/eval.py`), not adversarial training.
 
 ## Go2 gap-jumping family (Research)
 
@@ -101,7 +108,11 @@ registered for reference and may not reproduce a clean result. These appear in
 | Crawl | `go2_crawl`, `go2_crawl_duck`, `go2_crawl_gate_ra` / `_gate_avoid`, `go2_crawl_twin_ra` / `_twin_avoid`, `go2_crawl_isaacs`, `go2_crawl_locomote`, `go2_crawl_walk` | reach-avoid / safety / cumulative |
 | Low bar | `go2_low_bar_ra` / `_avoid` (+ `_h70` / `_h80` / `_h90`), `go2_low_bar_gate_ra` / `_gate_avoid`, `go2_low_bar_bridge` | reach-avoid / safety / cumulative |
 | Tunnel | `go2_tunnel_ra` / `go2_tunnel_avoid` | reach-avoid / safety |
-| Rendering-only | `*_video` variants (e.g. `go2_crawl_duck_video`, `go2_crawl_walk_video`) | — |
+| Rendering-only² | `go2_crawl_duck_video`, `go2_crawl_walk_video` | reach-avoid, cumulative |
+
+²"Rendering-only" is a use/maturity classification (these variants exist to
+capture rollout GIFs), not a mode — each still has a real mode:
+`go2_crawl_duck_video` is reach-avoid, `go2_crawl_walk_video` is cumulative.
 
 ## The algorithm layer's CPU reference environments
 
@@ -112,8 +123,13 @@ environment showreel.
 
 ## Page template
 
-Each environment page follows a standard shape: a compact operational summary
-(status / requirements, task IDs, success/failure, spaces, margins, config,
-budget, train / evaluate / visualize, expected result, limitations, source files)
-followed by the research narrative. GIFs are captured from evaluation rollouts;
-see each page for the `examples/eval.py` command.
+The **Stable** and **Research** pages ([Go2 stabilize](go2-stabilize.md),
+[Go2 gap-jumping](go2-gap.md)) follow the full template: a compact operational
+summary (status / requirements, task IDs, success/failure, spaces, margins,
+config, budget, train / evaluate / visualize, expected result, limitations,
+source files) followed by the research narrative. Pages for tasks that cannot
+report reproduced results on stock mjlab carry a **reduced** template —
+[Digit](digit.md) is gated behind a custom mjlab fork (it cannot be simulated on
+stock mjlab), and [Go2 crawl](go2-crawl.md) is a shelved/experimental thread with
+no clean result; both document Tasks, Margins, and Run only. GIFs are captured
+from evaluation rollouts; see each page for the `examples/eval.py` command.

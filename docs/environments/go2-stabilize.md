@@ -112,8 +112,9 @@ protect the flat walker.
 
 ## Related source files
 
-- `robot_safety_sandbox/tasks/go2_stabilize.py` — the `go2_stabilize` registration.
-- `robot_safety_sandbox/tasks/go2_velocity.py` — `go2_locomote` and the
-  `go2_walker_flat` cumulative task policy.
+- `robot_safety_sandbox/tasks/go2_stabilize.py` — the `go2_stabilize` **and**
+  `go2_locomote` registrations.
+- `robot_safety_sandbox/tasks/go2_velocity.py` — the `go2_walker_flat` cumulative
+  task policy.
 - `configs/go2_stabilize_reachavoidsac2p.yaml`, `configs/go2_stabilize_reachavoidppo1p.yaml`,
   `configs/go2_walker_flat.yaml`.

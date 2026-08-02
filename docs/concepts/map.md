@@ -28,10 +28,17 @@ so nothing in the registry can override it:
 |---|---|---|
 | `"safety"` (avoid) | `SafetyPPO1P` / `SafetyPPO2P` | `SafetySAC1P` / `SafetySAC2P` |
 | `"reach-avoid"` | `ReachAvoidPPO1P` / `ReachAvoidPPO2P` | `ReachAvoidSAC1P` / `ReachAvoidSAC2P` |
-| `"cumulative"` | `PPO` (stock SB3) / — | `SAC` (stock SB3) / — |
+| `"cumulative"` | `PPO` (stock SB3) / — | `SAC` (see note) / — |
 
 Cumulative has no **P**: there is no two-player cumulative game, and `algo_name`
-raises rather than inventing one. It also **refuses** a reach-avoid learner on an
+raises rather than inventing one.
+
+!!! note "Cumulative `SAC` is `CumulativeSAC1P`, not stock SB3 SAC"
+    `algo_name` returns the bare name `"SAC"` for a cumulative off-policy run, but
+    the trainer resolves it to **`safety_sb3.CumulativeSAC1P`** — stock SAC lacks
+    the GPU tensor collector and executed-action readback that filtered training
+    needs, so cumulative off-policy uses the safety_sb3 class (its checkpoint stays
+    an SB3-compatible SAC zip). Only cumulative **on-policy** is stock SB3 PPO. It also **refuses** a reach-avoid learner on an
 avoid-only task (no target set) — the guard against the retired `l_neg` pattern.
 The registry never imports `safety_sb3` (it re-declares the mode strings as
 literals, pinned by a test): `algo_name` returns names only, so the two layers

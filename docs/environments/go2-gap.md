@@ -93,8 +93,9 @@ See [`robot_safety_sandbox/margins.py`](../reference.md#margins) and
 ```bash
 # reach-avoid chain (single-player)
 python examples/train.py --family on_policy --task go2_gap_chain
-# + worst-case force adversary (two-player reach-avoid -> ReachAvoidPPO2P)
-python examples/train.py --family on_policy --task go2_gap_chain --adversary
+# + worst-case force adversary (two-player reach-avoid -> ReachAvoidPPO2P);
+# use the adversarial task id -- go2_gap_chain has supports_adversary=False
+python examples/train.py --family on_policy --task go2_gap_chain_isaacs --adversary
 
 # split test: reach-avoid vs avoid twins, per-gap-width
 python examples/train.py --family on_policy --task go2_gap_brake_or_jump_ra   --load runs/go2_gap_crossing/final_model.zip

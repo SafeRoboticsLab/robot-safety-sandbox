@@ -23,7 +23,10 @@ The experiment is an A/B with a shared code path:
   proposal — is what enters the replay buffer.** Storing the proposal against the
   resulting transition would fit the critic to a transition that never happened.
   Off-policy learning makes the substitution exactly correct with no importance
-  correction, which is why filtered training is run with **SAC**.
+  correction, which is why filtered training is run with **SAC** —
+  specifically `safety_sb3.CumulativeSAC1P` on the tensor path, not stock SB3 SAC,
+  since the readback of the executed action needs the tensor collector stock SAC
+  lacks.
 
 Both arms count failures the same way through one shared accounting path (see
 [Failure counting is always on](#failure-counting-is-always-on)), so the

@@ -13,6 +13,12 @@
 
 </div>
 
+![A Go2 quadruped crossing a gap on natural parkour terrain under a learned reach-avoid safety filter](environments/assets/nature-parkour-gap-crossing-demo-filter-cropped.gif){ width="720" }
+
+*A Go2 quadruped crossing a gap on natural parkour terrain under a value-based
+safety filter — one of the GPU-parallel benchmarks in the sandbox.
+[Browse the catalog →](environments/index.md)*
+
 ## What is this?
 
 Robot Safety Sandbox (`robot_safety_sandbox`, released as
@@ -41,8 +47,9 @@ into the `safety_sb3` learners.
 
 - :material-sword-cross: **Single-player & adversarial training**
 
-    Every task can be trained single-player or as a zero-sum two-player game
-    (a learned worst-case disturbance) with `--adversary`.
+    Tasks that declare `supports_adversary=True` can be trained single-player or
+    as a zero-sum two-player game (a learned worst-case disturbance) with
+    `--adversary`.
 
 - :material-cog: **PPO and SAC workflows**
 

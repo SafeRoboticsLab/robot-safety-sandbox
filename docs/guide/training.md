@@ -7,8 +7,17 @@ resolve the learner the same way: the task's `mode` × `--adversary`.
 
 | `--family` | trainer | the MAP's **A** | learners |
 |---|---|---|---|
-| `on_policy` (alias `ppo`) | `examples/train_on_policy.py` | `PPO` | `{Safety,ReachAvoid}PPO{1P,2P}`, plus stock `PPO` for `cumulative` |
-| `off_policy` (alias `sac`) | `examples/train_off_policy.py` | `SAC` | `{Safety,ReachAvoid}SAC{1P,2P}`, plus stock `SAC` for `cumulative` |
+| `on_policy` (alias `ppo`) | `examples/train_on_policy.py` | `PPO` | `{Safety,ReachAvoid}PPO{1P,2P}`, plus **stock SB3 `PPO`** for `cumulative` (numpy bridge, plain SB3 zip) |
+| `off_policy` (alias `sac`) | `examples/train_off_policy.py` | `SAC` | `{Safety,ReachAvoid}SAC{1P,2P}`, plus `safety_sb3.CumulativeSAC1P` for `cumulative` (tensor path; SB3-compatible SAC checkpoint) |
+
+!!! note "Cumulative is not the same class in both families"
+    A `cumulative` (plain reward-maximizing) task trains under **stock
+    `stable_baselines3.PPO`** on the numpy bridge in the on-policy family, but under
+    **`safety_sb3.CumulativeSAC1P`** on the tensor path in the off-policy family —
+    stock SAC lacks the GPU tensor collector and executed-action readback that
+    filtered training needs, so the off-policy cumulative learner is the safety_sb3
+    class (its checkpoint stays an SB3-compatible SAC zip). There is no two-player
+    cumulative game in either family.
 
 The 2P cells differ **structurally** between the families — `*PPO2P` and `*SAC2P`
 are different algorithms (see [the MAP](../concepts/map.md)). `train.py` forwards
@@ -97,7 +106,22 @@ see the [CLI reference](../reference/cli.md#off-policy-sac) and the safety_sb3
 ## Output
 
 Each run writes to `runs/<task>/` (override with `--out`, but keep runs under
-`runs/`): `final_model.zip`, `tensornormalize.pt` (observation normalizer),
-`config.yaml` (resolved recipe), and a TensorBoard directory. Base tensor
-environments also report always-on `safety/*` counters (how often training fails);
-see [filtered training](../safety-filter-training.md#failure-counting-is-always-on).
+`runs/`): `final_model.zip`, the observation normalizer, `config.yaml` (resolved
+recipe), and a TensorBoard directory.
+
+The normalizer file depends on the training path:
+
+| Training path | Normalizer file |
+|---|---|
+| Safety / reach-avoid PPO or SAC (tensor path) | `tensornormalize.pt` |
+| `cumulative` on-policy (stock SB3 PPO, numpy bridge) | `vecnormalize.pkl` |
+| `cumulative` off-policy (`CumulativeSAC1P`, tensor path) | `tensornormalize.pt` |
+
+In short: only the on-policy `cumulative` path (stock SB3 on the numpy bridge)
+writes `vecnormalize.pkl`; every tensor-path run — including off-policy
+`cumulative` — writes `tensornormalize.pt`. `examples/play.py` auto-detects
+whichever is present next to the checkpoint.
+
+Base tensor environments also report always-on `safety/*` counters (how often
+training fails); see
+[filtered training](../safety-filter-training.md#failure-counting-is-always-on).

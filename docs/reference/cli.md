@@ -99,7 +99,7 @@ Load a checkpoint and drive it in a viewer.
 |---|---|
 | `--task TASK` | the task |
 | `--algo {SafetyPPO1P,…,ReachAvoidSAC2P,PPO}` | the MAP name the checkpoint was trained as |
-| `--run RUN` | run dir holding `final_model.zip` + `tensornormalize.pt` |
+| `--run RUN` | run dir holding `final_model.zip` + its obs normalizer — `tensornormalize.pt` (tensor path) or `vecnormalize.pkl` (cumulative on-policy / stock SB3); `play.py` auto-detects whichever is present |
 | `--load LOAD` | explicit model `.zip` (overrides `--run`) |
 | `--adversary` | two-player checkpoints: also drive the learned disturbance |
 | `--viewer {auto,native,viser}` | native (needs `$DISPLAY`) / viser (browser, headless) |

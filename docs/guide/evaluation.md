@@ -59,9 +59,12 @@ python examples/eval.py --preset gap_gauntlet \
     --safety-policy runs/go2_gap_chain_ra/final_model.zip \
     --filter value --gap-width 0.35 --n-gaps 1 --num-envs 256 --steps 600
 
-# the unfiltered control arm
+# the unfiltered control arm (--safety-policy is still required — it supplies the
+# certificate + fallback the harness always loads — but --no-filter never applies it)
 python examples/eval.py --task go2_locomote --adversary \
-    --task-policy runs/go2_walker_flat/final_model.zip --no-filter --num-envs 256
+    --task-policy   runs/go2_walker_flat/final_model.zip \
+    --safety-policy runs/go2_stabilize_sac2p/final_model.zip \
+    --no-filter --num-envs 256
 ```
 
 The env is always a `MjlabTensorSafetyEnv`, never a raw `ManagerBasedRlEnv`: that

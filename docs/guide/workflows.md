@@ -30,10 +30,13 @@ The output is a checkpoint carrying both a controller and a value function
 task (mode="cumulative", dense reward)  ->  stock SB3 learner  ->  task-policy checkpoint
 ```
 
-A `cumulative` task is ordinary reward-maximizing RL. It trains with **stock
-SB3**, so the checkpoint is a vanilla SB3 zip that loads without `safety_sb3`.
-This is the **task policy** (`π_task`) a safety filter wraps — e.g.
-`go2_walker_flat`.
+A `cumulative` task is ordinary reward-maximizing RL. On the on-policy family it
+trains with **stock `stable_baselines3.PPO`** (e.g. `go2_walker_flat`), so the
+checkpoint is a vanilla SB3 zip that loads without `safety_sb3`; on the off-policy
+family it trains with **`safety_sb3.CumulativeSAC1P`** on the tensor path (the
+class filtered training needs — see workflow 4), producing an SB3-compatible SAC
+checkpoint. Either way this is the **task policy** (`π_task`) a safety filter
+wraps.
 
 ### 3. Safety-filter evaluation
 
@@ -57,19 +60,22 @@ the environment, the task policy, the filter, and the attack independently. See
 task policy  +  safety fallback  +  filter-wrapped training env
                                         |
                                         v
-                        SAC learner  ->  a task policy trained (nearly) failure-free
+                  CumulativeSAC1P  ->  a task policy trained (nearly) failure-free
 ```
 
 Here the filter sits **around the environment during training**, so the task
 policy learns while a fallback guarantees it (nearly) never fails — the *Provably
-Optimal RL under Safety Filtering* (PORL) setting. It is off-policy (SAC) so the
-executed action, not the proposed one, enters the replay buffer. See
+Optimal RL under Safety Filtering* (PORL) setting. It is off-policy
+(`safety_sb3.CumulativeSAC1P`, not stock SB3 SAC) so the executed action, not the
+proposed one, enters the replay buffer. See
 [train inside a filter](../safety-filter-training.md).
 
 ## Glossary of participating pieces
 
 - **Task policy** (`π_task`, "nominal") — an ordinary dense-reward policy; the
-  thing being filtered. Trained with stock SB3 (`mode="cumulative"`).
+  thing being filtered (`mode="cumulative"`). Trained with stock SB3 PPO
+  (on-policy) or `safety_sb3.CumulativeSAC1P` (off-policy); either checkpoint is
+  SB3-compatible.
 - **Safety policy** ("twin") — a `safety_sb3` checkpoint carrying the value `V(s)`
   and a fallback controller. Certifies states and drives the robot when engaged.
 - **Fallback** — the controller the filter switches to when the monitor rejects
