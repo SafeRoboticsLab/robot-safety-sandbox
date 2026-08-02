@@ -1,6 +1,6 @@
 """Unitree Go2 with a sloshy / rigid payload on the trunk — the ODD-conditioned demonstration robot.
 
-NON-INVASIVE: loads the stock Go2 spec (``assets_go2.get_spec``, unmodified) and adds a stacked,
+NON-INVASIVE: loads the stock Go2 spec (``assets.go2.go2_constants.get_spec``, unmodified) and adds a stacked,
 hinged payload to ``base_link`` via the MjSpec API (the pattern from ``assets_digit/digit_with_box``).
 Ported from LINC-POC (``linc/envs/pybullet/env_hexapod.py``, envtype='spring'): a vertical stack of
 boxes — block_0 rigid on the trunk, then N boxes each on a revolute hinge with ALTERNATING roll/pitch
@@ -26,7 +26,7 @@ import numpy as np
 
 from mjlab.entity import EntityCfg
 
-from robot_safety_sandbox.envs.assets_go2 import go2_constants as _g2
+from robot_safety_sandbox.envs.assets.go2 import go2_constants as _g2
 
 # payload block geometry — LINC 0.15×0.15×0.05 (full) ⇒ MuJoCo half-extents:
 _HW, _HH = 0.075, 0.025

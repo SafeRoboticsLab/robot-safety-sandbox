@@ -40,7 +40,7 @@ def register_all() -> None:
   )
   from robot_safety_sandbox.envs.go2_stabilize.env_cfg import stance_margins
 
-  common = dict(margin_fn=stance_margins, default_algo="ReachAvoidPPO", supports_adversary=True)
+  common = dict(margin_fn=stance_margins, mode="reach-avoid", supports_adversary=True)
   register(TaskSpec(task_id="go2_payload_stabilize", cfg_builder=go2_payload_stabilize_env_cfg,
                     description="[ODD: rigidity x total-mass RANDOMIZED per-env] " + _DESC, **common))
   # E008c-style A/B on Go2: one CONDITIONED policy (sees θ) vs one BLIND policy (does not), same
@@ -55,7 +55,7 @@ def register_all() -> None:
   # contact gentle (contact-force safe set). Blind ODD-randomized env (robust to the hidden payload).
   # supports_adversary=True so it CAN take a pull later, but it is trained single-player first.
   register(TaskSpec(task_id="go2_payload_descent", cfg_builder=go2_payload_descent_env_cfg,
-                    margin_fn=descent_margins, default_algo="ReachAvoidPPO", supports_adversary=True,
+                    margin_fn=descent_margins, mode="reach-avoid", supports_adversary=True,
                     description="[soft-descent fallback: reach a soft belly-down rest, contact-force safe "
                                 "set] Go2 (hidden randomized payload) lowers from standing to a low/level/"
                                 "slow belly-down rest while keeping non-foot ground contact gentle."))
