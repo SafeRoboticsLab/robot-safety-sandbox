@@ -60,7 +60,9 @@ def register_all() -> None:
     g_digit_box_stabilize,
     g_digit_box_stand,
     g_digit_stabilize,
+    g_digit_stabilize_dense,
     g_digit_stand,
+    g_digit_stand_dense,
     l_digit_stay,
   )
 
@@ -183,4 +185,39 @@ def register_all() -> None:
     description="SafetySAC1P avoid whose reset distribution is the E034 walker's "
                 "states (incl. shoved) — Q_safe(s,a) valid on MOVING states for "
                 "the QCBF filter. Fall-only g. Train: train.py --family off_policy.",
+  ))
+
+  # --- Dense certificate-preserving avoid ladder (T003, E039+) ------------------
+  # AVOID on the DENSE fall margin g̃_fall (= g_digit_stand densified by a 6-channel
+  # interior-quality field: upright/stillness/capture-point/ang-mom/pose/planted).
+  # sign(g̃)==sign(g) pointwise, so the {V≥0} certificate is unchanged; the density
+  # gives the min-backup the per-step improvement gradient it otherwise starves for
+  # (the E036/E037 failure). Same env as digit_stabilize (zero command, stock resets,
+  # fall-only termination). Rung 1 = SafetySAC1P bootstrap; later rungs add kick/
+  # walker-state resets + a push curriculum (Digit-local cfg/reset changes).
+  register(TaskSpec(
+    task_id="digit_avoid_dense",
+    cfg_builder=digit_stabilize_env_cfg,
+    margin_fn=compose(g_digit_stand_dense),  # dense g̃_fall (V_fall engagement margin)
+    ctrl_dim=20,
+    mode=AVOID,
+    supports_adversary=True,
+    kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
+    description="Dense-avoid bootstrap (T003/E039): SafetySAC on g̃_fall — "
+                "g_digit_stand + certificate-preserving 6-channel shaping. Zero "
+                "command, stock resets, fall-only. Train: train.py --family off_policy.",
+  ))
+
+  # Dense STAY margin g̃_stay (release/handoff certificate; α-annealed via _l_alpha).
+  # Used at the stay-tightening rung (E041), not for engagement.
+  register(TaskSpec(
+    task_id="digit_stay_dense",
+    cfg_builder=digit_stabilize_env_cfg,
+    margin_fn=compose(g_digit_stabilize_dense),  # dense g̃_stay (V_stay release margin)
+    ctrl_dim=20,
+    mode=AVOID,
+    supports_adversary=True,
+    kwargs={"ctrl_gain": 12.0, "adversary_body": "torso"},
+    description="Dense-stay (T003/E041): SafetySAC on g̃_stay = min(g_fall,l_stance) "
+                "densified; the settled-set RELEASE certificate. Train: --family off_policy.",
   ))

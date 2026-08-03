@@ -1,0 +1,38 @@
+# E039 — Rung 1 of the T003 dense-margin avoid ladder: dense-avoid BOOTSTRAP.
+# SafetySAC1P on g̃_fall (g_digit_stand + certificate-preserving 6-channel interior
+# shaping; sign(g̃)==sign(g) proven ⇒ {V≥0} unchanged). The dense margin gives the
+# min-backup the per-step improvement gradient it starved for in E036/E037; at γ=0.99
+# the avoid recursion V=(1−γ)g̃+γ·min(g̃,V′) IS the dense-cumulative regime E038 proved
+# stock SAC solves ("survive+upright ⇒ stabilize"). Zero command, stock jitter resets,
+# fall-only termination, NO pushes (rung 1). Later rungs add kick/walker-state resets +
+# a push curriculum + γ-anneal (E040) and stay-tightening (E041).
+# Entropy per E036–E038: target_entropy 0.0 (not −dim(A)); min_alpha 0.05 floor.
+#   source activate.sh
+#   python external/robot_safety_sandbox/examples/train.py \
+#     --config external/robot_safety_sandbox/configs/digit_avoid_dense_safetysac1p_e039.yaml
+family: off_policy           # avoid + off_policy → SafetySAC1P
+task: digit_avoid_dense
+num_envs: 2048
+steps: 60000000
+seed: 0
+
+# --- SAC hypers (professor rung-1 spec) ---
+lr: 3.0e-4
+tau: 0.01
+target_update_interval: 2
+ent_coef: auto_0.1           # learned α; target below, floored by min_alpha
+target_entropy: 0.0          # NOT −dim(A)=−20 (which collapsed E036/E037)
+min_alpha: 0.05              # exploration floor
+buffer_size: 4000000
+batch_size: 8192
+gradient_steps: 4
+# net = trainer default (256,256,256 actor / 128,128,128 qf)
+
+# --- discount: FIXED at 0.99 for rung 1 (no anneal; the shaping IS the dense channel) ---
+gamma_schedule: "off"
+gamma_init: 0.99
+
+# --- eval: avoid task → safe_rate = survival (the gate metric) ---
+eval_rollouts: 100
+eval_freq: 2000000
+video_interval: 5000000

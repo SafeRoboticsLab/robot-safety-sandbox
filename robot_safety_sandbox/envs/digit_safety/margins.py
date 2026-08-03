@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import math
 
+import mujoco
 import torch
 
 from robot_safety_sandbox.envs.digit_safety.mdp import _FOOT_AND_KNEE_BODIES
@@ -317,3 +318,243 @@ def l_digit_stance(env) -> torch.Tensor:
     dim=0,
   )
   return terms.amin(dim=0)
+
+
+# ---------------------------------------------------------------------------
+# DENSE, CERTIFICATE-PRESERVING avoid shaping (T003, 2026-08-03).
+#
+# The min-backup avoid value V = min_τ g(s_τ) gives almost no improvement
+# gradient at healthy standing states (the professor's diagnosis): the incumbent
+# margins are near-binary "not fallen", so PPO/SAC advantages there are ~noise.
+# Densify WITHOUT breaking the {V >= 0} certificate: shape the incumbent margin
+# ``m`` (the SIGN CARRIER) with bounded, boundary-vanishing terms.
+#
+#     m̄  = clamp(m, -1, +1)
+#     g̃  = m̄ + relu(m̄)·ρ⁺(s) - relu(-m̄)·ρ⁻(s)          ∈ [-2, +2]
+#
+# ρ⁺, ρ⁻ ∈ [0, 1]. Because the shaping is multiplied by relu(±m̄) it vanishes at
+# the boundary m=0, so  sign(g̃) == sign(m) POINTWISE (proof: m>0 ⇒ g̃=m̄(1+ρ⁺)>0;
+# m<0 ⇒ g̃=m̄(1+ρ⁻)<0; m=0 ⇒ g̃=0). That identity IS the soundness guarantee —
+# the shaped margin has the exact same zero-set / sign as the certified one, so
+# {g̃ >= 0} == {m >= 0}; it only adds slope INSIDE each region for the learner.
+# It is unit-tested in scripts/calibrate_dense_margins.py (0 violations required).
+#
+# ρ⁺ ("how comfortably safe") is a Σw=1 blend of six smooth in-[0,1] channels;
+# ρ⁻ ("how violently unsafe") a single violation-severity score. Every scale and
+# weight below is a named, tunable constant — the human calibrates the scales
+# from the percentile readout the calibrate script prints (target: each φ spans
+# roughly (0.1, 0.9) over the sampled distribution).
+# ---------------------------------------------------------------------------
+
+# Sign-carrier clamp: m̄ = clamp(m, -SHAPE_CLAMP, +SHAPE_CLAMP). Keep at 1.0 so
+# g̃ ∈ [-2, +2] and relu(±m̄) ∈ [0, 1] weights the shaping.
+SHAPE_CLAMP = 1.0
+
+# --- ρ⁺ channel scales (Gaussian e-fold widths) ---
+RHO_UPRIGHT_SCALE = 0.20   # ‖proj_grav_xy‖ e-fold (unit-vector tilt, ~sin θ)
+RHO_STILL_V_SCALE = 0.4    # ‖v_lin‖ e-fold (m/s)
+RHO_STILL_W_SCALE = 0.8    # ‖ω‖ e-fold (rad/s)
+RHO_CAPTURE_SCALE = 0.15   # ‖capture-point offset ξ‖ e-fold (m)
+RHO_ANGMOM_SCALE = 2.0     # ‖L_xy‖ e-fold — TRUE centroidal AM (kg·m²/s); tune
+RHO_POSE_SCALE = 0.35      # per-joint pose deviation e-fold (rad)
+RHO_PLANT_HEIGHT = 0.03    # foot-site z deadband before a foot counts as lifted (m)
+RHO_PLANT_SCALE = 0.05     # foot-site lift e-fold (m)
+CAPTURE_H_MIN = 0.05       # COM-height floor in the capture-point time-constant (m)
+_GRAVITY = 9.81
+
+# --- ρ⁺ channel weights (must sum to 1) ---
+RHO_W_UPRIGHT = 0.20
+RHO_W_STILL = 0.15
+RHO_W_CAPTURE = 0.25
+RHO_W_ANGMOM = 0.10
+RHO_W_POSE = 0.20
+RHO_W_PLANT = 0.10
+
+# --- ρ⁻ violation-severity normalizers (ρ⁻ = clamp(0.5·v/2 + 0.5·ω/4, 0, 1)) ---
+RHO_NEG_V_SCALE = 2.0      # ‖v_lin‖ normalizer (m/s)
+RHO_NEG_W_SCALE = 4.0      # ‖ω‖ normalizer (rad/s)
+
+# --- pose-to-keyframe per-joint weights (resolved by hardware joint name) ---
+# Legs (hip roll/yaw/pitch + knee) carry the posture; toes and arms matter less;
+# passive shin/tarsus/heel-spring joints are unactuated leaf springs -> weight 0.
+_POSE_JOINT_WEIGHTS: dict[str, float] = {
+  "left_hip_roll_joint": 1.0, "right_hip_roll_joint": 1.0,
+  "left_hip_yaw_joint": 1.0, "right_hip_yaw_joint": 1.0,
+  "left_hip_pitch_joint": 1.0, "right_hip_pitch_joint": 1.0,
+  "left_knee_joint": 1.0, "right_knee_joint": 1.0,
+  "left_toe_A_joint": 0.3, "right_toe_A_joint": 0.3,
+  "left_toe_B_joint": 0.3, "right_toe_B_joint": 0.3,
+  "left_shoulder_roll_joint": 0.25, "right_shoulder_roll_joint": 0.25,
+  "left_shoulder_pitch_joint": 0.25, "right_shoulder_pitch_joint": 0.25,
+  "shoulder_yaw_joint_left": 0.25, "shoulder_yaw_joint_right": 0.25,
+  "left_elbow_joint": 0.25, "right_elbow_joint": 0.25,
+}
+
+
+def _finite(x: torch.Tensor) -> torch.Tensor:
+  """NaN/inf guard: the env emits NaNs on a hard fall. Replace with finite
+  values so every channel stays well-defined (mirrors how the incumbent margins
+  stay finite). The exact ρ⁺ value on a fallen state is irrelevant to soundness
+  -- there m < 0 and relu(m̄)=0 zeros the ρ⁺ contribution entirely."""
+  return torch.nan_to_num(x, nan=0.0, posinf=1.0e6, neginf=-1.0e6)
+
+
+def _resolve_dense(env) -> dict:
+  """Resolve & cache the dense-shaping helpers on the env (once):
+  the per-joint pose-weight vector, and the whole-body centroidal
+  angular-momentum body row. Prints the resolved pose map + AM path once."""
+  cache = getattr(env, "_digit_dense_idx", None)
+  if cache is not None:
+    return cache
+  robot = env.scene["robot"]
+  d = robot.data
+  dev = d.joint_pos.device
+  njoints = d.joint_pos.shape[1]
+
+  # Pose weights, aligned to joint_pos columns (find_joints index == column;
+  # same convention l_digit_stance relies on).
+  pose_w = torch.zeros(njoints, device=dev)
+  resolved: dict[str, float] = {}
+  for name, w in _POSE_JOINT_WEIGHTS.items():
+    ids, _ = robot.find_joints((name,))
+    col = int(ids[0])
+    pose_w[col] = w
+    resolved[name] = w
+  pose_w_sum = float(pose_w.sum().item())
+
+  # Whole-body centroidal angular momentum. mjData.subtree_angmom[b] is the
+  # angular momentum of the subtree rooted at body b about that subtree's COM.
+  # The robot's floating base is body ``.../torso`` (root of its kinematic tree),
+  # so its subtree == the whole robot ⇒ subtree_angmom[torso] IS the whole-body
+  # centroidal AM. subtree_angmom is indexed by FULL-model body id (world +
+  # terrain + robot), so resolve the torso's full id by name.
+  angmom_ok = False
+  angmom_body = 0
+  try:
+    raw = env.sim.mj_model
+    sam = env.sim.data.subtree_angmom
+    tid = None
+    for i in range(raw.nbody):
+      nm = mujoco.mj_id2name(raw, mujoco.mjtObj.mjOBJ_BODY, i)
+      if nm is not None and nm.split("/")[-1] == "torso":
+        tid = i
+        break
+    probe = sam[:, 0, :]  # slice -> torch (verifies the bridge is torch-usable)
+    if (tid is not None and probe.ndim == 2 and probe.shape[-1] == 3
+        and sam[:].shape[1] == raw.nbody):
+      angmom_body = tid
+      angmom_ok = True
+  except Exception as exc:  # noqa: BLE001 - any failure -> proxy fallback
+    print(f"[dense-margins] subtree_angmom unavailable ({exc!r}); "
+          "using ω_xy proxy for the angular-momentum channel.")
+
+  cache = {
+    "pose_w": pose_w,
+    "pose_w_sum": pose_w_sum,
+    "angmom_ok": angmom_ok,
+    "angmom_body": angmom_body,
+  }
+  env._digit_dense_idx = cache
+
+  # One-time review print.
+  print("[dense-margins] pose-to-keyframe weight map (unlisted joints -> 0.0):")
+  for name, w in resolved.items():
+    print(f"    {name:<28s} w={w}")
+  n_zero = njoints - len(resolved)
+  print(f"    ({len(resolved)} weighted, {n_zero} passive/other at 0.0, "
+        f"Σw_j={pose_w_sum:.3f})")
+  if angmom_ok:
+    print(f"[dense-margins] angular-momentum channel: TRUE centroidal AM "
+          f"subtree_angmom[body={angmom_body} '.../torso'], xy components.")
+  else:
+    print("[dense-margins] angular-momentum channel: ω_xy PROXY "
+          "(subtree_angmom not cleanly accessible).")
+  return cache
+
+
+def _shape(m: torch.Tensor, rho_plus: torch.Tensor,
+           rho_minus: torch.Tensor) -> torch.Tensor:
+  """Certificate-preserving shaping: g̃ = m̄ + relu(m̄)·ρ⁺ - relu(-m̄)·ρ⁻ with
+  m̄ = clamp(m, -SHAPE_CLAMP, +SHAPE_CLAMP). sign(g̃) == sign(m) pointwise."""
+  mbar = m.clamp(-SHAPE_CLAMP, SHAPE_CLAMP)
+  pos = mbar.clamp_min(0.0)          # relu(m̄)
+  neg = (-mbar).clamp_min(0.0)       # relu(-m̄)
+  return mbar + pos * rho_plus - neg * rho_minus
+
+
+def _rho_plus(env) -> torch.Tensor:
+  """ρ⁺(s) ∈ [0, 1]: Σw·φ_c over six smooth "how comfortably safe" channels."""
+  res = _resolve_dense(env)
+  idx = _resolve(env)
+  d = env.scene["robot"].data
+  foot_ids = idx["foot_ids"]
+
+  # 1. upright — small planar projected gravity == vertical torso.
+  pg_xy = _finite(d.projected_gravity_b[:, :2])
+  n_pg = torch.linalg.norm(pg_xy, dim=-1)
+  phi_upright = torch.exp(-((n_pg / RHO_UPRIGHT_SCALE) ** 2))
+
+  # 2. stillness — low base linear & angular speed.
+  v_lin = _finite(d.root_link_lin_vel_b)
+  w_ang = _finite(d.root_link_ang_vel_b)
+  n_v = torch.linalg.norm(v_lin, dim=-1)
+  n_w = torch.linalg.norm(w_ang, dim=-1)
+  phi_still = torch.exp(-((n_v / RHO_STILL_V_SCALE) ** 2)
+                        - ((n_w / RHO_STILL_W_SCALE) ** 2))
+
+  # 3. capture-point — instantaneous capture point near the foot midpoint.
+  com = _finite(d.root_com_pos_w)
+  v_com = _finite(d.root_com_lin_vel_w)
+  h_com = com[:, 2].clamp_min(CAPTURE_H_MIN)
+  tau = torch.sqrt(h_com / _GRAVITY).unsqueeze(-1)  # pendulum time constant
+  midfeet_xy = _finite(d.site_pos_w[:, foot_ids, :2]).mean(dim=1)
+  xi = com[:, :2] + v_com[:, :2] * tau - midfeet_xy
+  n_xi = torch.linalg.norm(xi, dim=-1)
+  phi_capture = torch.exp(-((n_xi / RHO_CAPTURE_SCALE) ** 2))
+
+  # 4. angular-momentum — small whole-body centroidal AM (true, or ω_xy proxy).
+  if res["angmom_ok"]:
+    L = _finite(env.sim.data.subtree_angmom[:, res["angmom_body"], :])
+    n_L = torch.linalg.norm(L[:, :2], dim=-1)
+  else:
+    n_L = torch.linalg.norm(w_ang[:, :2], dim=-1)  # base-frame ω_xy proxy
+  phi_angmom = torch.exp(-((n_L / RHO_ANGMOM_SCALE) ** 2))
+
+  # 5. pose-to-keyframe — weighted mean-sq joint deviation from the nominal pose.
+  q = _finite(d.joint_pos)
+  q_nom = _finite(d.default_joint_pos)
+  sq = (q - q_nom) ** 2
+  msd = (sq * res["pose_w"]).sum(dim=-1) / res["pose_w_sum"]
+  phi_pose = torch.exp(-(msd / (RHO_POSE_SCALE ** 2)))
+
+  # 6. planted — both feet near the ground (product over the two feet).
+  z = _finite(d.site_pos_w[:, foot_ids, 2])
+  lift = (z - RHO_PLANT_HEIGHT).clamp_min(0.0)
+  phi_foot = torch.exp(-((lift / RHO_PLANT_SCALE) ** 2))
+  phi_plant = phi_foot.prod(dim=1)
+
+  rho = (RHO_W_UPRIGHT * phi_upright + RHO_W_STILL * phi_still
+         + RHO_W_CAPTURE * phi_capture + RHO_W_ANGMOM * phi_angmom
+         + RHO_W_POSE * phi_pose + RHO_W_PLANT * phi_plant)
+  return rho.clamp(0.0, 1.0)
+
+
+def _rho_minus(env) -> torch.Tensor:
+  """ρ⁻(s) ∈ [0, 1]: violation severity — how violently the state is moving."""
+  d = env.scene["robot"].data
+  n_v = torch.linalg.norm(_finite(d.root_link_lin_vel_b), dim=-1)
+  n_w = torch.linalg.norm(_finite(d.root_link_ang_vel_b), dim=-1)
+  return (0.5 * n_v / RHO_NEG_V_SCALE + 0.5 * n_w / RHO_NEG_W_SCALE).clamp(0.0, 1.0)
+
+
+def g_digit_stand_dense(env) -> torch.Tensor:
+  """Dense ENGAGEMENT margin g̃_fall: certificate-preserving shaping of the
+  fall-only avoid margin ``g_digit_stand``. Drop-in g_fn: ``compose(...)``."""
+  return _shape(g_digit_stand(env), _rho_plus(env), _rho_minus(env))
+
+
+def g_digit_stabilize_dense(env) -> torch.Tensor:
+  """Dense RELEASE margin g̃_stay: certificate-preserving shaping of the STAY
+  margin ``g_digit_stabilize`` (which already α-anneals via ``env._l_alpha``).
+  Drop-in g_fn: ``compose(g_digit_stabilize_dense)``."""
+  return _shape(g_digit_stabilize(env), _rho_plus(env), _rho_minus(env))
