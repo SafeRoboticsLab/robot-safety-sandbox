@@ -1,0 +1,36 @@
+# E037 = E036 (ReachAvoidSAC1P on digit_stabilize) + the exploration fix.
+# E036 failed because SAC's auto-alpha (target_entropy = -dim(A) = -20) drove the
+# entropy temperature to the min_alpha=1e-3 floor by ~4M steps -> near-deterministic
+# policy -> never discovered standing -> safe_rate flat 0, falls in ~0.9s. The trainer's
+# own --target-entropy help documents this exact mode (E056). Fix: soften the entropy
+# target AND raise the floor so alpha holds ~0.1 and exploration persists the whole run.
+#   source activate.sh
+#   python external/robot_safety_sandbox/examples/train.py \
+#     --config external/robot_safety_sandbox/configs/digit_stabilize_reachavoidsac1p_e037.yaml
+family: off_policy
+task: digit_stabilize        # mode=reach-avoid, 1P -> ReachAvoidSAC1P
+num_envs: 512                # co-scheduled on the shared RTX 4070
+steps: 100000000
+seed: 0
+
+# --- SAC hypers (reference) ---
+lr: 1.0e-4
+tau: 0.01
+target_update_interval: 2
+ent_coef: auto_0.1
+buffer_size: 1000000
+batch_size: 4096
+gradient_steps: 4
+
+# --- THE FIX: sustain exploration (E036 collapsed to the floor) ---
+target_entropy: -10          # was default -20 (=-dim(A)); less negative holds exploration open
+min_alpha: 0.1               # floor alpha at 0.1 (was 1e-3) -> guaranteed exploration all run
+
+# --- discount annealing (reference-faithful) ---
+gamma_schedule: step
+gamma_init: 0.99
+gamma_end: 0.9999
+
+# --- eval ---
+eval_rollouts: 100
+eval_freq: 2000000
