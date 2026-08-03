@@ -1,0 +1,40 @@
+# E038 — SANITY CHECK: can CumulativeSAC1P learn to WALK (dense reward)?
+# digit_walk_rigidtoe is mode=CUMULATIVE -> CumulativeSAC1P on the tensor path. Its 26-term
+# dense locomotion reward is PPO-proven (the E034 walker walked), so this isolates ONE
+# question: does our SAC work on a well-shaped dense reward with the right entropy setup?
+#
+# Recipe = FastSAC (arXiv 2512.01996, Amazon FAR) CONFIG-REACHABLE subset. FastSAC walks a
+# ~29-DoF humanoid in ~15 min on a 4090 with: average-twin-Q + LayerNorm + C51 (architecture,
+# NOT here yet) and target_entropy=0.0 + funnel nets + big batch (config, HERE). The headline
+# is target_entropy=0.0 (not SAC's default -dim(A)=-20, which collapsed E036/E037 exploration).
+# LayerNorm/C51/average-Q are Stage 2 (need a custom policy) if this config-only run stalls.
+#   source activate.sh
+#   python external/robot_safety_sandbox/examples/train.py \
+#     --config external/robot_safety_sandbox/configs/digit_walk_cumulativesac1p_e038.yaml
+family: off_policy           # cumulative + off_policy -> CumulativeSAC1P (tensor path)
+task: digit_walk_rigidtoe    # 26-term dense locomotion reward (unchanged; PPO-proven)
+env_overrides:               # drop the command_vel curriculum: fixed command range
+  curriculum: false          # (FastSAC-faithful) + dodges the SB3 stdout-logger key collision
+num_envs: 2048
+steps: 100000000
+seed: 0
+
+# --- FastSAC config-reachable hypers ---
+lr: 3.0e-4                   # FastSAC (was 1e-4)
+tau: 0.01                    # conservative — FastSAC's 0.125 needs LayerNorm stabilization
+target_update_interval: 2
+ent_coef: auto_0.001         # learned alpha, low init (FastSAC: "large init alpha -> instability")
+target_entropy: 0.0          # ★ THE KEY: FastSAC loco target (NOT -dim(A)=-20 which collapses exploration)
+min_alpha: 0.001             # small safety floor
+buffer_size: 2000000
+batch_size: 8192             # FastSAC large batch (was 4096)
+gradient_steps: 4            # UTD (FastSAC uses 8 WITH LayerNorm; stay conservative without it)
+gamma_schedule: "off"        # cumulative: fixed gamma
+gamma_init: 0.97             # FastSAC locomotion gamma
+net: "512,256,128"           # FastSAC actor funnel H->H/2->H/4
+qf_net: "768,384,192"        # FastSAC critic funnel
+
+# --- eval + video (watch the gait emerge) ---
+eval_rollouts: 100
+eval_freq: 2000000
+video_interval: 5000000

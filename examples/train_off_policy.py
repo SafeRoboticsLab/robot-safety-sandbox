@@ -484,6 +484,18 @@ def main():
                           end_criterion=args.end_criterion),
       interval=args.video_interval))
 
+  # General logger-robustness fix (restores the deleted train_nominal.py behavior;
+  # UPSTREAM CANDIDATE, not env-specific): SB3's default HumanOutputFormat truncates
+  # metric keys to 36 chars, so envs with many long reward-term / curriculum keys
+  # collide to one key -> ValueError (e.g. Episode_Reward/joint_deviation_hip_{pitch,
+  # roll,yaw}, Curriculum/command_vel/ang_vel_z_{min,max}). Widen the STDOUT formatter
+  # only; tensorboard and the wandb callback are unaffected.
+  import sys as _sys
+  from stable_baselines3.common.logger import (
+      HumanOutputFormat as _HOF, Logger as _Logger, make_output_format as _mof)
+  model.set_logger(_Logger(folder=outdir, output_formats=[
+      _HOF(_sys.stdout, max_length=100), _mof("tensorboard", outdir)]))
+
   model.learn(total_timesteps=args.steps, callback=CallbackList(cbs))
   model.save(os.path.join(outdir, "final_model.zip"))
   if hasattr(model.env, "save"):

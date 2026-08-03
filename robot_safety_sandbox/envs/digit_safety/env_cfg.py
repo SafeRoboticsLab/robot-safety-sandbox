@@ -113,7 +113,9 @@ def digit_box_stabilize_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   return cfg
 
 
-def digit_walk_rigidtoe_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+def digit_walk_rigidtoe_env_cfg(
+  play: bool = False, curriculum: bool = True
+) -> ManagerBasedRlEnvCfg:
   """NOMINAL rigidtoe velocity WALKER (mode=CUMULATIVE pi_task) — the raw
   velocity env ``digit_v3_flat_safety_rigidtoe_env_cfg`` (same plant + obs-92 as
   the E012 safety twin; keeps the twist command + dense locomotion rewards + the
@@ -124,8 +126,17 @@ def digit_walk_rigidtoe_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   E034: the command curriculum (easy->hard) is what a biped needs to learn a
   reliable gait (E033, curriculum-off, was fall-prone ~35%). Train with
   ``train.py --family on_policy`` (stock SB3 PPO on the dense reward).
+
+  ``curriculum=False`` (set via ``env_overrides``) drops the ``command_vel``
+  curriculum -> a FIXED command range (more FastSAC-faithful), and dodges the
+  SB3 stdout-logger key-collision on ``Curriculum/command_vel/ang_vel_z_{min,max}``
+  (both truncate to one key -> ValueError; E034 fixed this in the now-deleted
+  train_nominal.py). Default True preserves the E034 walker.
   """
-  return digit_v3_flat_safety_rigidtoe_env_cfg(play=play)
+  cfg = digit_v3_flat_safety_rigidtoe_env_cfg(play=play)
+  if not curriculum:
+    cfg.curriculum = {}
+  return cfg
 
 
 def digit_avoid_from_walk_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
