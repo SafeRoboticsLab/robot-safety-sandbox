@@ -13,7 +13,7 @@ from ..registry import AVOID, REACH_AVOID, TaskSpec, register
 
 def register_all() -> None:
   from robot_safety_sandbox.envs.go2_gap.brake_or_jump import (
-    unitree_go2_brake_or_jump_env_cfg, l_stable_far)
+    unitree_go2_brake_or_jump_env_cfg, l_stable_far, l_stable_far_clean)
   g = g_terrain_relative
 
   def _pair(width, suffix):
@@ -36,3 +36,21 @@ def register_all() -> None:
   _pair(0.12, "")
   _pair(0.20, "_w20")
   _pair(0.30, "_w30")
+
+  # Airborne-clean finetune: NEW tasks, distinct from the _ra* arms
+  # above (which the package/eval depend on). Reach target = stable far stance
+  # AND a genuine airborne clear (l_stable_far_clean); curriculum advances only
+  # on clean crossings (clean=True gate). g / obs are UNCHANGED. Warm-start each
+  # from its width's naive-RA arm.
+  def _clean(width, suffix):
+    cb = partial(unitree_go2_brake_or_jump_env_cfg, gap_width=width, clean=True)
+    register(TaskSpec(
+      task_id=f"go2_gap_brake_or_jump_ra_clean{suffix}", cfg_builder=cb,
+      margin_fn=compose(g, l_stable_far_clean), mode=REACH_AVOID,
+      description=f"brake-or-jump AIRBORNE-CLEAN reach-avoid @gap {width}: RA "
+                  f"target = stable far stance reached by a genuine airborne "
+                  f"clear (feet off over the gap, no body-plant); clean-gated "
+                  f"curriculum. Finetune of go2_gap_brake_or_jump_ra{suffix}."))
+
+  _clean(0.20, "_w20")
+  _clean(0.12, "_w12")

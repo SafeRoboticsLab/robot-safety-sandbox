@@ -43,6 +43,25 @@ DEFAULT_WIDTH = 0.12
 K_COMMIT = 7          # committed bands 0..7
 D = 12                # final level
 
+# --- airborne-clean finetune -------------------------------------
+# A "clean" crossing = a genuine AIRBORNE CLEAR: while the base is over the gap
+# (x_rel in (0, gap_width)), NO foot is loaded, AND no body-plant occurs. The
+# discriminating physics: the gap is a pit, so a loaded foot while the base is
+# over the gap means a foot is bridging back to the near edge (or reaching the
+# far edge) -- a leg-dragging BRIDGE. A true flight has all feet unloaded through
+# the traversal. Formulated as the NEGATION (latch touch-down + body-plant, clean
+# = neither) so that committed-band spawns -- which start already PAST the gap
+# and never traverse it -- are clean by construction and the clean-gated
+# curriculum advances through them instead of stalling at L0.
+#
+# NB: the first-pass spec latched "went airborne (any single all-feet-off step)
+# over the gap", but a touch-and-go bridge also has a brief all-feet-off instant,
+# so that flag fired ~0.94 for bridges too (measured: scratchpad/airborne_clean_probe.py,
+# 2026-08-21) and did NOT discriminate. The touch-down formulation below gives
+# 0.30 (airborne) vs 0.70 (bridge) at the decision band -- see the airborne-clean detail.
+_TOUCHDOWN_FORCE = 5.0    # N per foot: a foot is "loaded" above this
+_BODYPLANT_FORCE = 10.0   # N: trunk/limb ground contact (matches nonfoot g term)
+
 
 def _gap_width(env):
   g = env.scene.terrain.cfg.terrain_generator
@@ -148,6 +167,13 @@ def _ensure(env):
     env._L = 0
     env._peek = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
     env._win = {"cur": [], "peek": []}
+  if not hasattr(env, "_td_og"):
+    # airborne-clean latches: per-env, reset in reset_brake_or_jump.
+    # _td_og: a foot was loaded while the base was over the gap (bridge).
+    # _bodyplant: trunk/limb hit the ground.  clean = ~_td_og & ~_bodyplant.
+    env._td_og = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    env._bodyplant = torch.zeros(env.num_envs, dtype=torch.bool,
+                                 device=env.device)
 
 
 def reset_brake_or_jump(env, env_ids, asset_cfg=SceneEntityCfg("robot")):
@@ -161,16 +187,23 @@ def reset_brake_or_jump(env, env_ids, asset_cfg=SceneEntityCfg("robot")):
   env._peek[env_ids] = peek
   lvl = torch.where(peek, min(env._L + 1, D), env._L).long()
   _spawn_level(env, env_ids, lvl)
+  # airborne-clean latches: fresh per episode.
+  env._td_og[env_ids.long()] = False
+  env._bodyplant[env_ids.long()] = False
 
 
-def brake_or_jump_levels(env, env_ids) -> torch.Tensor:
+def _levels(env, env_ids, require_clean: bool) -> torch.Tensor:
   """Look-ahead gate: advance L when current-level success >= 0.70 AND the
-  L+1 peek success >= 0.15, each over a full rolling window."""
+  L+1 peek success >= 0.15, each over a full rolling window. When
+  ``require_clean`` the success predicate additionally demands an airborne-clean
+  crossing (airborne-clean finetune)."""
   _ensure(env)
   robot = env.scene["robot"]
   x = robot.data.root_link_pos_w[env_ids, 0] - env.scene.env_origins[env_ids, 0]
   up = -robot.data.projected_gravity_b[env_ids, 2]
   ok = (env.termination_manager.time_outs[env_ids] & (x > far_x(env)) & (up > 0.7))
+  if require_clean:
+    ok = ok & (~env._td_og & ~env._bodyplant)[env_ids]
   pk = env._peek[env_ids]
   env._win["cur"].extend(ok[~pk].cpu().tolist())
   env._win["peek"].extend(ok[pk].cpu().tolist())
@@ -189,6 +222,17 @@ def brake_or_jump_levels(env, env_ids) -> torch.Tensor:
   return torch.tensor(float(env._L))
 
 
+def brake_or_jump_levels(env, env_ids) -> torch.Tensor:
+  """Outcome-gated reverse curriculum (the naive-RA tasks)."""
+  return _levels(env, env_ids, require_clean=False)
+
+
+def brake_or_jump_levels_clean(env, env_ids) -> torch.Tensor:
+  """Clean-gated reverse curriculum: advance only on airborne-clean
+  crossings."""
+  return _levels(env, env_ids, require_clean=True)
+
+
 def l_stable_far(env, pos_norm=0.20, v_rest=0.6, v_norm=0.5,
                  up_min=0.85, up_norm=0.15):
   x_far = far_x(env)
@@ -201,8 +245,59 @@ def l_stable_far(env, pos_norm=0.20, v_rest=0.6, v_norm=0.5,
                        (up - up_min) / up_norm)
 
 
+def _clean_flag(env) -> torch.Tensor:
+  """Per-step latch update; returns ``clean = ~_td_og & ~_bodyplant``.
+
+  Called once per env step from :func:`l_stable_far_clean` (``base._cached_margins``
+  memoizes ``margin_fn`` per ``common_step_counter``, so the latch advances
+  exactly once per step). Latches a BRIDGE (a foot loaded while the base is over
+  the gap) and a body-plant; clean is the complement. Guards the contact sensors:
+  on a shadow/eval env that lacks them, degrades to ``clean = True`` (recovers
+  the plain l_stable_far behavior) rather than crashing."""
+  _ensure(env)
+  robot = env.scene["robot"]
+  x_rel = robot.data.root_link_pos_w[:, 0] - env.scene.env_origins[:, 0]
+  og = (x_rel > 0.0) & (x_rel < _gap_width(env))     # base strictly over the pit
+  try:
+    feet = env.scene["feet_ground_contact"]
+    fdata = feet.data.force
+    if fdata is None:
+      raise AttributeError
+    fmag = torch.norm(fdata, dim=-1)                 # [B, F] (per-foot netforce)
+    foot_down = fmag > _TOUCHDOWN_FORCE
+    while foot_down.dim() > 2:
+      foot_down = foot_down.any(dim=-1)              # collapse any slot dim
+    feet_down = foot_down.sum(dim=1)                 # [B] number of feet loaded
+    non = env.scene["nonfoot_ground_touch"]
+    nf = non.data.force_history
+    if nf is None:
+      nf = non.data.force
+    if nf is None:
+      raise AttributeError
+    mag = torch.norm(nf, dim=-1)
+    while mag.dim() > 1:
+      mag = mag.amax(dim=-1)                         # [B] peak trunk contact force
+    env._td_og |= og & (feet_down > 0)               # a foot bridged over the gap
+    env._bodyplant |= (mag > _BODYPLANT_FORCE)
+  except (KeyError, AttributeError):
+    return torch.ones(env.num_envs, dtype=torch.bool, device=env.device)
+  return ~env._td_og & ~env._bodyplant
+
+
+def l_stable_far_clean(env, pos_norm=0.20, v_rest=0.6, v_norm=0.5,
+                       up_min=0.85, up_norm=0.15):
+  """l_stable_far min'd with a clean-crossing gate: reaching the target now also
+  requires a genuine airborne clear (all feet off over the gap, no body-plant).
+  A dirty leg-dragging "bridge" crossing gets l <= -1 (alive-but-unsuccessful).
+  g is untouched, so safety/liveness are preserved."""
+  base = l_stable_far(env, pos_norm, v_rest, v_norm, up_min, up_norm)
+  gate = (_clean_flag(env).float() - 0.5) * 2.0     # clean -> +1, dirty -> -1
+  return torch.minimum(base, gate)
+
+
 def unitree_go2_brake_or_jump_env_cfg(play: bool = False,
-                                 gap_width: float = DEFAULT_WIDTH
+                                 gap_width: float = DEFAULT_WIDTH,
+                                 clean: bool = False
                                  ) -> ManagerBasedRlEnvCfg:
   cfg = unitree_go2_harvest_env_cfg(play=play, gap_width=gap_width)
   cfg.episode_length_s = 4.0
@@ -212,5 +307,11 @@ def unitree_go2_brake_or_jump_env_cfg(play: bool = False,
   cfg.events.pop("reset_robot_joints", None)
   if "push_robot" in cfg.events:
     cfg.events.pop("push_robot", None)
-  cfg.curriculum = {"brake_or_jump_levels": CurriculumTermCfg(func=brake_or_jump_levels)}
+  # clean=True: gate curriculum advancement on airborne-clean crossings.
+  if clean:
+    cfg.curriculum = {
+      "brake_or_jump_levels_clean": CurriculumTermCfg(func=brake_or_jump_levels_clean)}
+  else:
+    cfg.curriculum = {
+      "brake_or_jump_levels": CurriculumTermCfg(func=brake_or_jump_levels)}
   return cfg
