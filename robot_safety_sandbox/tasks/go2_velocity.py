@@ -17,7 +17,8 @@ from ..registry import CUMULATIVE, TaskSpec, register
 
 
 def register_all() -> None:
-  from robot_safety_sandbox.envs.velocity.go2 import unitree_go2_flat_env_cfg
+  from robot_safety_sandbox.envs.velocity.go2 import (
+    unitree_go2_fast_env_cfg, unitree_go2_flat_env_cfg)
 
   register(TaskSpec(
     task_id="go2_walker_flat", cfg_builder=unitree_go2_flat_env_cfg,
@@ -25,3 +26,10 @@ def register_all() -> None:
     description="Blind flat-terrain velocity walker (dense reward, stock SB3 "
                 "PPO). Task policy pi_task for the gap filter experiments; "
                 "train with train.py --family on_policy."))
+
+  register(TaskSpec(
+    task_id="go2_walker_fast", cfg_builder=unitree_go2_fast_env_cfg,
+    mode=CUMULATIVE,
+    description="Fast blind flat walker: forward command raised to 3.0 m/s (flat "
+                "trains to 2.0) — pi_task for high-speed gap approaches. Stock "
+                "SB3 PPO, warm-start from go2_walker_flat."))

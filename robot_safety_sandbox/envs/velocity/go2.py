@@ -166,3 +166,39 @@ def unitree_go2_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     twist_cmd.ranges.ang_vel_z = (-0.5, 0.5)
 
   return cfg
+
+
+def unitree_go2_fast_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Flat-terrain velocity walker with a RAISED top speed: forward command up to
+  3.0 m/s (the flat walker trains on (-1.0, 2.0)). Same reward/gait stack —
+  running-gait pose reward, running_threshold 1.5 — so the only change is the
+  command sampling range's upper bound, letting the policy learn to track
+  ~2.5-3.0 m/s. The fast pi_task for high-speed gap approaches; warm-start from
+  go2_walker_flat for quick convergence."""
+  cfg = unitree_go2_flat_env_cfg(play=play)
+  twist_cmd = cfg.commands["twist"]
+  assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+  # raise the top forward speed for BOTH train and play (play is pinned by the
+  # eval's command surgery anyway; this just permits commanding up to 3.0).
+  twist_cmd.ranges.lin_vel_x = (-1.0, 3.0)
+  # Command-speed curriculum, RAMPED. Two earlier bugs, both fixed here:
+  #  - the default `command_vel` stages gate on common_step_counter > 120000
+  #    POLICY steps; a batched SB3 run bumps the counter once per policy step
+  #    (~73k at 300M env-steps / 4096 envs), so it NEVER left stage-0's (-0.5,1.0)
+  #    cap -- the walker was never commanded above 1.0.
+  #  - dropping the curriculum entirely shocked the warm-started 1.0 walker
+  #    with the full (-1.0,3.0) range from step 0 -> it froze (~0 velocity) for
+  #    every command >1.0.
+  # Fix: warm-start from the competent 1.0 walker (go2_walker_flat) and RAMP the
+  # top speed on REACHABLE policy-step thresholds, starting just above its known
+  # competence (1.5) so each stage is a gentle stretch, up to 3.0. Thresholds are
+  # POLICY steps; at 4096 envs 3000/9000/18000 = ~12M/37M/74M env-steps.
+  if "command_vel" in cfg.curriculum:
+    cfg.curriculum["command_vel"].params["velocity_stages"] = [
+      {"step": 0,     "lin_vel_x": (-1.0, 1.5), "lin_vel_y": (-0.5, 0.5),
+       "ang_vel_z": (-1.0, 1.0)},
+      {"step": 3000,  "lin_vel_x": (-1.0, 2.0), "lin_vel_y": (-1.0, 1.0)},
+      {"step": 9000,  "lin_vel_x": (-1.0, 2.5), "lin_vel_y": (-1.0, 1.0)},
+      {"step": 18000, "lin_vel_x": (-1.0, 3.0), "lin_vel_y": (-1.0, 1.0)},
+    ]
+  return cfg
