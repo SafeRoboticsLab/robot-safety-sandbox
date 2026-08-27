@@ -264,6 +264,12 @@ def main():
                       "TaskSpec value. 'failure' (all tasks today): failure set "
                       "+ timeout, never on reach. 'reach-avoid': also end on "
                       "success (g>=0 & l>=0). 'timeout': only the env timeout.")
+  p.add_argument("--algo", default=None,
+                 help="override the MAP-resolved safety_sb3 learner class by "
+                      "NAME (e.g. ReachAvoidMaskedPPO1P for the RAS policy-mask "
+                      "variant of go2_gap_brake_or_jump_ras). Must be a "
+                      "same-mode learner (its rollout buffer must match the "
+                      "task backup). Default: algo_name() from mode + --adversary.")
   p.add_argument("--adversary", action="store_true")
   p.add_argument("--force-max", type=float, default=50.0)
   # ISAACS game-balance knobs. The adversary force is SUSTAINED (every step),
@@ -373,6 +379,12 @@ def main():
   # reach-avoid learner, which has no valid formulation for any constant l
   # (see margins.py).
   algo = algo_name(args.task, adversary=args.adversary, family="on_policy")
+  # Optional explicit learner override (algo_name's validation still runs above,
+  # so an avoid-only task on a reach-avoid learner is still refused). Used for
+  # variants the MAP formula has no name for -- e.g. ReachAvoidMaskedPPO1P.
+  if args.algo:
+    print(f"[algo] override: {algo} -> {args.algo} (--algo)")
+    algo = args.algo
   if _safety_sb3 is None:
     raise SystemExit(
       f"'{args.task}' is a mode={s.mode!r} task and needs the '{algo}' learner, "

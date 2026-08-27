@@ -262,6 +262,10 @@ class _MjlabCore:
     self.latch_margin_fn = latch_margin_fn
     self._hyb = None       # lazy (policy, obs_mean, obs_var)
     self._hyb_latch = torch.zeros(int(num_envs), dtype=torch.bool, device=device)
+    # per-step reach-active mask (True = REACH-controlled this step = trainable;
+    # False = lander-controlled). Captured in _mj_step and read by the collector
+    # (env._policy_mask) into the masked rollout buffer -- RAS policy_mask.
+    self._policy_mask = None
     self._last_l = None
     obs_dict, _ = self.mj.reset()
     # The FULL obs dict of the last transition. The bridges expose one group
@@ -323,6 +327,12 @@ class _MjlabCore:
     return self._hyb
 
   def _mj_step(self, actions: torch.Tensor):
+    # Per-step reach-active mask (RAS policy_mask). Default all-True (every
+    # env reach-controlled); the hybrid-latch block below flips latched envs to
+    # False for the step the frozen lander drives. The collector reads it after
+    # step_tensor into the masked rollout buffer.
+    self._policy_mask = torch.ones(self.mj.num_envs, dtype=torch.bool,
+                                   device=self.mj.device)
     ctrl = actions[:, :self.ctrl_dim] * self.ctrl_gain
     if self.adversary:
       if self.dstb_mode == "action":
@@ -333,6 +343,10 @@ class _MjlabCore:
       # latch on LAST step's l (computed inside the previous env.step); once
       # latched, the frozen skill controls the env until its episode ends.
       self._hyb_latch |= self._last_l > 0.0
+      # Capture the mask for THIS step BEFORE the ctrl override and BEFORE the
+      # &= ~done un-latch below: reach-controlled iff NOT latched right now. A
+      # FRESH tensor (~ allocates), never an alias of _hyb_latch (it is mutated).
+      self._policy_mask = ~self._hyb_latch
       if bool(self._hyb_latch.any()):
         pol, h_mean, h_var = self._hyb_load()
         with torch.no_grad():
@@ -367,7 +381,11 @@ class _MjlabCore:
     if self.hybrid_skill is not None:
       done = terminated | truncated
       self._hyb_latch &= ~done
-      self._last_l = l
+      # Latch source: the SEPARATE guard margin when given (the anti-Goodhart split
+      # -- and the ONLY latch signal on AVOID envs, whose reward l is an inert
+      # placeholder), else the reward l. Fires the handover on l_latch > 0.
+      self._last_l = (self.latch_margin_fn(self.mj).float()
+                      if self.latch_margin_fn is not None else l)
       self._log["hybrid/latched_frac"] = float(self._hyb_latch.float().mean())
     # mjlab auto-resets INSIDE self.mj.step, which clears the termination
     # manager's buffers — so the only correct source for "what ended this step"

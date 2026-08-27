@@ -411,6 +411,10 @@ def main():
         f"min_alpha={args.min_alpha} max_alpha={args.max_alpha} "
         f"batch={args.batch_size} grad_steps={args.gradient_steps} "
         f"learn_starts={learning_starts} buffer={args.buffer_size}")
+  # Provenance for the timeout-terminal fix: prove the flag reached the buffer.
+  _boot = getattr(getattr(model, "replay_buffer", None), "bootstrap_on_timeout", "n/a")
+  print(f"[timeout] bootstrap_on_timeout={_boot} "
+        f"(False => a timeout is TERMINAL min(l,g); expected for safety/reach-avoid)")
 
   # --- callbacks ---
   cbs = [
