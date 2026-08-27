@@ -15,7 +15,7 @@ any particular terrain lives here (see robot_safety_sandbox/eval/).
       --safety-policy runs/go2_stabilize_sac2p/final_model.zip \
       --filter gameplay --dstb policy --dstb-scale 0.5 --num-envs 256
 
-  # the gap gauntlet (E021), now a preset rather than its own script
+  # the gap gauntlet, now a preset rather than its own script
   python examples/eval.py --preset gap_gauntlet \
       --task-policy runs/go2_walker_flat/final_model.zip \
       --safety-policy runs/go2_gap_chain_ra/final_model.zip \
@@ -129,7 +129,7 @@ def build_parser(pre_args):
                       "literature filter and not Def-2 valid step-by-step: "
                       "strictly more conservative, and results must be "
                       "reported as a smoothed VARIANT of the named filter. "
-                      "Required to reproduce E051/E054 and every gauntlet "
+                      "Required to reproduce the earlier gauntlet runs and every gauntlet "
                       "before 2026-07-25, which predate the canonical switch.")
   p.add_argument("--caution", type=float, default=0.45,
                  help="--smoothing only: upper edge of the caution band")

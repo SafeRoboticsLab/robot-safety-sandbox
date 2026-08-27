@@ -21,7 +21,7 @@ Why this is a separate task from ``go2_walker_flat``:
     free command space would put its critic out of distribution and make the
     filter's engagement depend on an axis the experiment is not studying. This
     is the same env ``go2_locomote`` uses, at the same operating point as the
-    E051/E054 gauntlets.
+    earlier gauntlets.
   * it carries a ``margin_fn`` despite being mode="cumulative", and asks the
     bridge for ``dense_margins``: the learner's reward stays the env's dense
     stack (that is what "cumulative" means), while (g, l) are computed
@@ -41,7 +41,7 @@ from functools import partial
 from ..registry import CUMULATIVE, TaskSpec, register
 
 #: the pinned forward command, m/s. Matches go2_locomote's default and the
-#: E051/E054 operating point.
+#: the validated operating point.
 CMD_VX = 1.0
 
 

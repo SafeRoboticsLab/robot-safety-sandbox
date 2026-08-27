@@ -87,7 +87,7 @@ _CUMULATIVE_DEFAULTS = dict(
 # reshapes a target set this mode does not have). The base discount is settable
 # via --gamma (default 0.99, applied in both branches); on reach-avoid a higher
 # fixed gamma (0.999) lengthens the value's planning horizon so the policy takes
-# a safe detour rather than rushing the target (car_goal E064). The SAC trainer's
+# a safe detour rather than rushing the target (car_goal). The SAC trainer's
 # --gamma-* schedule flags don't exist here, so a config carrying them is already
 # rejected by merge_config's key validation.
 _SAFETY_ONLY = (
@@ -298,7 +298,7 @@ def main():
                  help="base discount (both branches). On reach-avoid a higher "
                       "fixed gamma (0.999) lengthens the value's planning horizon "
                       "so the policy detours safely instead of rushing the target "
-                      "and clipping obstacles (car_goal E064). Distinct from "
+                      "and clipping obstacles (car_goal). Distinct from "
                       "--gamma-anneal (a schedule, OFF on PPO).")
   p.add_argument("--gamma-anneal", action=argparse.BooleanOptionalAction,
                  default=False, help="anneal the discount 0.99->0.9999 (an HJ/SAC "
@@ -416,7 +416,7 @@ def main():
     gamma=args.gamma, gae_lambda=0.95, learning_rate=args.lr,
     # gamma anneal (-> 0.9999) is an HJ/SAC safety-VALUE device; on PPO's GAE
     # value it makes the target near-undiscounted and the value net can diverge
-    # (car_goal E064: value_loss -> 1e5, EV < 0 once gamma reached ~1). Default
+    # (car_goal: value_loss -> 1e5, EV < 0 once gamma reached ~1). Default
     # OFF on the on-policy path; set `gamma_anneal: true` in the config to enable.
     gamma_anneal=args.gamma_anneal,
     ent_coef=args.ent_coef, vf_coef=args.vf_coef, clip_range=0.2,

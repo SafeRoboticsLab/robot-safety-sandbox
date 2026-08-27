@@ -17,7 +17,7 @@ livelocks (there is no *stay*-safe action under a closing gate that also makes
 progress) while the reach-avoid filter drives through while the window is open
 -- the split the static bar cannot produce.
 
-Island-style hazard (mirrors ``twins.py`` E035): the physical/visual beam never
+Island-style hazard (mirrors ``twins.py``): the physical/visual beam never
 moves (it renders at the OPEN clearance); the descending ceiling lives ONLY in
 the g margin and in the ``crushed_by_gate`` termination.
 

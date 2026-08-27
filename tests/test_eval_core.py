@@ -104,7 +104,7 @@ def test_build_filter_names_the_capability_the_twin_lacks(kind, missing):
 
 @pytest.mark.parametrize("kind", ["rollout", "gameplay"])
 def test_rollout_reduction_is_derived_from_the_task_mode(kind):
-  """The E051 defect: a mode='reach-avoid' task certified with min_t g.
+  """The min_t-g defect: a mode='reach-avoid' task certified with min_t g.
 
   The reduction must follow the task's mode, so a reach-avoid task gets
   max_t min(l, min_s<=t g) without anyone asking for it.

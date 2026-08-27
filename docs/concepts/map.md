@@ -57,7 +57,7 @@ Same MAP cell, **different algorithm**. Read this before choosing `--adversary`:
 
 The shared-critic form is the closer approximation of the zero-sum value; the PPO
 form trades that for on-policy stability and needs its phase schedule tuned. The
-E042 result on `go2_stabilize` (best-ever on that task) is `ReachAvoidSAC2P`.
+The best-ever result on `go2_stabilize` is `ReachAvoidSAC2P`.
 
 ## See also
 

@@ -189,7 +189,7 @@ def car_goal_env_cfg(play: bool = False,
                             # unreachable at 3 m / 8 s -- see START_TO_GOAL /
                             # _WHEEL_SPEED). Overridable: at gamma=0.999 the car
                             # takes a longer safe detour, so a 20 s horizon lets
-                            # more episodes finish the reach (car_goal E064).
+                            # more episodes finish the reach (car_goal).
     scene=SceneCfg(
       num_envs=1,
       env_spacing=2.0,

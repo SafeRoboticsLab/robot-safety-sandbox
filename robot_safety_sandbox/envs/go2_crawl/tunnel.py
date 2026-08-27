@@ -174,7 +174,7 @@ def reset_tunnel(env, env_ids, asset_cfg=SceneEntityCfg("robot")):
   # Upper bound = depth (the exit face), NOT depth+pad: spawning past the exit
   # lands the robot ALREADY in the reach set (l>=0) -> a free 1-step success that
   # gives a "do-nothing wins ~25%" attractor the sparse RA reward can't escape
-  # (E045 v1: trained success == the zero-action free baseline). Every spawn now
+  # (an earlier iteration: trained success == the zero-action free baseline). Every spawn now
   # has l<0, so reaching the exit ALWAYS requires crawling. The policy still
   # visits past-exit states by reaching them (value coverage for the filter).
   x_rel = u(-_X_PAD, depth)

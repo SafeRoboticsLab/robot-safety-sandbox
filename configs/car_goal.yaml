@@ -1,7 +1,7 @@
 # Car-goal reach-avoid (ReachAvoidPPO1P) — the tutorial recipe.
 #   python examples/train.py --config configs/car_goal.yaml
 #
-# E064: this reproduces the SUCCESSFUL 2026-07-19 run (wandb commit c53d8a2f),
+# this reproduces the SUCCESSFUL 2026-07-19 run (wandb commit c53d8a2f),
 # whose recipe had drifted because car_goal.yaml was uncommitted at the time.
 # The load-bearing element is the GAMMA ANNEAL (StepGammaAnneal 0.99->0.999@20%
 # ->0.9999@40%): it was ON by default on 7/19, later flipped OFF on the PPO

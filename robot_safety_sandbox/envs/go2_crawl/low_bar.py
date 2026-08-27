@@ -34,7 +34,7 @@ Margins:
              under the beam; < 0 = strike / too-tall / jumping-over. Outside the
              span the bar cannot threaten -> +large. )
   l = min( (x_rel - (bar_depth + 0.5))/POS_NORM , (up - 0.85)/UP_NORM )
-      -- completion PAST the bar, position-based, NO rest term (E030 braking
+      -- completion PAST the bar, position-based, NO rest term (the braking
       game).  POS_NORM SPANS the spawn range so l is a real reach gradient (not
       clamped flat at the campaign clamp) even at the far standstill spawn.
 """

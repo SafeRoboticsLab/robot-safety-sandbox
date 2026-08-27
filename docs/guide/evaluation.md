@@ -53,7 +53,7 @@ python examples/eval.py --task go2_locomote --adversary \
     --safety-policy runs/go2_stabilize_sac2p/final_model.zip \
     --filter gameplay --dstb policy --dstb-scale 0.5 --num-envs 256
 
-# the gap gauntlet (E021), a preset rather than its own script
+# the gap gauntlet, a preset rather than its own script
 python examples/eval.py --preset gap_gauntlet \
     --task-policy   runs/go2_walker_flat/final_model.zip \
     --safety-policy runs/go2_gap_chain_ra/final_model.zip \

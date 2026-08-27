@@ -51,7 +51,7 @@ class SwitchCfg:
   reported as a smoothed variant of the named filter, never as the published
   one.
 
-  ⚠ E051/E054 and every earlier gauntlet ran the SMOOTHED variant -- it was the
+  ⚠ Every earlier gauntlet ran the SMOOTHED variant -- it was the
   only implementation at the time. Reproducing those numbers needs
   ``smoothing=True``; the default here no longer does.
   """

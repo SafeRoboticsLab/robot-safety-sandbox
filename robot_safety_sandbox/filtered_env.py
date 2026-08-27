@@ -53,7 +53,7 @@ class TwinObsAdapter:
   Zeroing both restores the twin's own distribution AND states the right
   question: "from this physical state, can the stabilizer still bring the robot
   to a safe stand?" -- which is what a fallback is for. It is emphatically not
-  "can it track 1 m/s", which this twin cannot do at all (E053).
+  "can it track 1 m/s", which this twin cannot do at all.
 
   The slices are DERIVED from the observation manager's term table rather than
   hardcoded, so a cfg that reorders or resizes terms cannot silently shift them.

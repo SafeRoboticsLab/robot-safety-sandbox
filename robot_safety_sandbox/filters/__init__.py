@@ -42,7 +42,7 @@ the latched, median-smoothed, hysteresis-released variant that the gap/crawl
 gauntlets were tuned with. It is a genuinely different filter (strictly more
 conservative, and not Def-2 valid instant-by-instant), so a run that sets it
 must be reported as a smoothed variant of the named filter, never as the
-published one. ⚠ Every evaluation before 2026-07-25 (E051/E054 included) used
+published one. ⚠ Every evaluation before 2026-07-25 used
 the smoothed variant, because it was then the only implementation and it was
 the default; those numbers do not carry over to the canonical switch.
 

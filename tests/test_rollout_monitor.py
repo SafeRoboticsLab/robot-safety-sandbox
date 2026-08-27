@@ -257,7 +257,7 @@ def test_rollout_composes_with_the_unmodified_least_restrictive_intervention():
 # --- per-env IDENTITY: the domain-randomization draw ---------------------------
 # A shadow that copies STATE perfectly but redraws its own domain randomization
 # certifies a robot from the same distribution, not THE robot being filtered.
-# That gap once invalidated a whole horizon sweep (E051/E052 gameplay rows), so
+# That gap once invalidated a whole horizon sweep (early gameplay rows), so
 # it is pinned from both ends: the field list is derived, and an unknown
 # randomizer is an error rather than a silent skip.
 

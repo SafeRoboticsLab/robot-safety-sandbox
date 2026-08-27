@@ -13,7 +13,7 @@ next to the terrain rather than in ``robot_safety_sandbox/eval/``:
   * the CROSSING and LIVELOCK rates -- the gap's own reading of "did the task
     still get done", which is meaningless on any other terrain.
 
-It reproduces the E021 configuration; see docs/log/experiments.md.
+It reproduces the gap-gauntlet configuration.
 """
 
 from __future__ import annotations
@@ -240,7 +240,7 @@ def register_preset() -> None:
   register(EvalPreset(
     name="gap_gauntlet",
     description="R-CBF claim gauntlet: a blind walker approaching a pinned gap, "
-                "filtered by a safety twin (the E021 configuration).",
+                "filtered by a safety twin (the gap-gauntlet configuration).",
     task="go2_gap_chain",
     defaults=dict(episode_s=20.0, cmd_vx=1.0),
     add_args=_add_args,

@@ -9,7 +9,7 @@ The task's mode supplies M, `--adversary` supplies P; the four cells are:
 
   # 1-player reach-avoid (ReachAvoidSAC1P)
   python examples/train_off_policy.py --task go2_stabilize --steps 100000000 --seed 0
-  # 2-player reach-avoid (ReachAvoidSAC2P) -- the E042 config
+  # 2-player reach-avoid (ReachAvoidSAC2P) -- the reference-faithful stabilize config
   python examples/train_off_policy.py --task go2_stabilize --adversary --num-envs 1024
   # 1-player avoid (SafetySAC1P) / 2-player avoid (SafetySAC2P)
   python examples/train_off_policy.py --task digit_stabilize_avoid [--adversary]
@@ -207,7 +207,7 @@ def main():
                  help="SAC's entropy TARGET; 'auto' (SB3 default) means "
                       "-dim(A), i.e. -12 for the go2's 12 joints. That asks a "
                       "locomotion policy to be near-deterministic, so alpha is "
-                      "driven down and exploration dies early (E056: alpha "
+                      "driven down and exploration dies early (alpha "
                       "collapses to the floor in every cell and the policy "
                       "settles into a standstill). A LESS negative value "
                       "(e.g. -4, -6) holds exploration open.")

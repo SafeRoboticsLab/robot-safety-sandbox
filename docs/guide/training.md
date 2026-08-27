@@ -49,7 +49,7 @@ needed on the CLI. Precedence is **argparse defaults < config < explicit CLI
 flags**.
 
 ```bash
-python examples/train.py --config configs/go2_stabilize_reachavoidsac2p.yaml           # the E042 recipe (family: off_policy)
+python examples/train.py --config configs/go2_stabilize_reachavoidsac2p.yaml           # the reference recipe (family: off_policy)
 python examples/train.py --config configs/go2_stabilize_reachavoidsac2p.yaml --seed 3  # override one knob
 ```
 
@@ -61,7 +61,7 @@ with `--config <that file>` to reproduce it exactly. The shipped recipes live in
 |---|---|---|
 | `configs/car_goal.yaml` | `on_policy` | `ReachAvoidPPO1P` — the [car-goal tutorial](../tutorial-car-goal.md) recipe |
 | `configs/go2_stabilize_reachavoidppo1p.yaml` | `on_policy` | `ReachAvoidPPO1P` — the safety-PPO recipe |
-| `configs/go2_stabilize_reachavoidsac2p.yaml` | `off_policy` | `ReachAvoidSAC2P` — the E042 recipe (best-ever on `go2_stabilize`) |
+| `configs/go2_stabilize_reachavoidsac2p.yaml` | `off_policy` | `ReachAvoidSAC2P` — the reference recipe (best-ever on `go2_stabilize`) |
 | `configs/go2_walker_flat.yaml` | `on_policy` | `mode: cumulative` — the dense-reward Go2 walker task policy on stock SB3 PPO |
 | `configs/go2_walker_filtered.yaml` | `off_policy` | `mode: cumulative` + a `safety_filter:` block — [filtered training](../safety-filter-training.md) |
 

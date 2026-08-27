@@ -63,7 +63,7 @@ experiment registry for the narrative of what was tried and why.
 
 | file | family | what |
 |---|---|---|
-| `go2_stabilize_reachavoidsac2p.yaml` | `off_policy` | `ReachAvoidSAC2P`, reference-faithful + fast leaderboard — the E042 config |
+| `go2_stabilize_reachavoidsac2p.yaml` | `off_policy` | `ReachAvoidSAC2P`, reference-faithful + fast leaderboard — the reference stabilize config |
 | `go2_stabilize_reachavoidppo1p.yaml` | `on_policy` | `ReachAvoidPPO1P`, the safety-PPO recipe |
 | `car_goal.yaml` | `on_policy` | `ReachAvoidPPO1P` — the car-goal tutorial recipe |
 | `go2_walker_flat.yaml` | `on_policy` | `mode: cumulative` — the dense-reward Go2 walker (pi_task) on stock SB3 PPO |

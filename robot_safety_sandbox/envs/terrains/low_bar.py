@@ -10,7 +10,7 @@ The floor is a single continuous PHYSICAL plane at z = 0 spanning approach +
 under-bar + rest.  The bar is **VIRTUAL**: a visual-only beam geom rendered at
 ``bar_clearance`` with ``contype = conaffinity = 0`` so it has NO collision.
 
-Why virtual (E032 lesson): a *physical* bar on the ``terrain`` body let a
+Why virtual (a hard-won lesson): a *physical* bar on the ``terrain`` body let a
 leg-vs-bar strike read as a legal ground contact (contact aliasing) -- the
 margin code could not tell "clipped the beam" from "foot on the floor".  Here
 the bar never touches the physics: the g margin rules a strike analytically
@@ -46,7 +46,7 @@ def _add_box(body, geoms, pos, size, rgba=(0.5, 0.5, 0.5, 1.0), collide=True):
   geom.rgba = rgba
   if not collide:
     # Visual-only geom: no collision (contype/conaffinity 0). The virtual bar
-    # never enters the physics -> no contact aliasing with the ground (E032).
+    # never enters the physics -> no contact aliasing with the ground.
     geom.contype = 0
     geom.conaffinity = 0
   geoms.append(TerrainGeometry(geom=geom, color=rgba))

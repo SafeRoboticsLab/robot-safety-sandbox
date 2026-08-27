@@ -20,7 +20,7 @@ seed: 0
 # --- the safety filter the policy trains inside (the treatment arm) ---
 safety_filter:
   # the fallback twin whose filter you train inside (a go2_stabilize
-  # ReachAvoidSAC2P checkpoint — the E049/E051 twin). Point this at your own
+  # ReachAvoidSAC2P checkpoint — the reach-avoid twin). Point this at your own
   # trained twin; omit the whole block for the unfiltered control arm.
   safety_policy: runs/go2_stabilize_reachavoidsac2p/final_model.zip
   filter: critic            # Safety Critic Filter: Q(s, u_nom) from the SAC twin
@@ -29,9 +29,9 @@ safety_filter:
   smoothing: false          # canonical LeastRestrictiveIntervention (not the
                             # non-canonical HeuristicSmoothing variant)
 
-# --- recipe (mirrors the E058 treatment recipe: g64 + a held-open alpha) ---
-gradient_steps: 64          # load-bearing for throughput/quality (E059)
+# --- recipe (mirrors the treatment recipe: g64 + a held-open alpha) ---
+gradient_steps: 64          # load-bearing for throughput/quality
 target_entropy: -3          # holds exploration open; 'auto' (=-12) collapses the
-                            # walker to a standstill (E056)
-max_alpha: 1.0              # ceiling on the entropy temperature (E058)
+                            # walker to a standstill
+max_alpha: 1.0              # ceiling on the entropy temperature
 video_interval: 5000000

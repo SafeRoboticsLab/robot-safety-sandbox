@@ -4,7 +4,7 @@ The ORIGINAL task of this safety line and the simplest zoo entry: no curricula,
 no staged pipeline, task-local margins. The reference starting point for porting
 a task that needs no special machinery. Both tasks are mode="reach-avoid" and
 support ``--adversary`` -> the two-player game (ReachAvoidPPO2P /
-ReachAvoidSAC2P, the E042 config).
+ReachAvoidSAC2P, the reference stabilize config).
 """
 
 from __future__ import annotations
