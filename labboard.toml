@@ -1,0 +1,6 @@
+# labboard project declaration (read on every device that checks out the repo).
+# A PROJECT pin serves no bytes — only docs/log/tasks/*.md (tickets). main names
+# the ONE host that owns/writes tickets; other devices write receipts to
+# docs/log/tasks/outbox/ and this device folds them in via `labboard inbox`.
+project = "robot-safety-sandbox"
+main    = "buzi-pc"
