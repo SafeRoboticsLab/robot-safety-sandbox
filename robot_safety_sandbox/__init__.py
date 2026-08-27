@@ -21,7 +21,9 @@ from .tasks import go2_gap_brake_or_jump as _go2_gap_brake_or_jump
 from .tasks import go2_gap_brake_or_jump_ras as _go2_gap_brake_or_jump_ras
 from .tasks import go2_gap_brake_or_jump_aug as _go2_gap_brake_or_jump_aug
 from .tasks import go2_gap_brake_or_jump_hando as _go2_gap_brake_or_jump_hando
+from .tasks import go2_gap_brake_or_jump_sras as _go2_gap_brake_or_jump_sras
 from .tasks import go2_gap_raas as _go2_gap_raas
+from .tasks import go2_gap_stay as _go2_gap_stay
 from .tasks import go2_filtered as _go2_filtered
 from .tasks import go2_low_bar as _go2_low_bar
 from .tasks import go2_tunnel as _go2_tunnel
@@ -38,7 +40,9 @@ _go2_gap_brake_or_jump.register_all()  # split test: harvested-state RA vs avoid
 _go2_gap_brake_or_jump_ras.register_all()  # RAS phase-2 B+: gate + frozen lander + policy_mask
 _go2_gap_brake_or_jump_aug.register_all()  # RAS v2 Stage-2: aug-spawn launch-quality twin
 _go2_gap_brake_or_jump_hando.register_all()  # handover-range finetune (50% harvested-handover spawn)
+_go2_gap_brake_or_jump_sras.register_all()  # sRAS Phase I — inherited sets (reach=Ω̂[stay], fail=F∪(T\Ω̂))
 _go2_gap_raas.register_all()  # RAAS v2: pi_safelanding lander @ gap 0.30 (certified-launch hybrid)
+_go2_gap_stay.register_all()  # sRAS Phase II: STAY/viability game -> V_stay / Omega[stay]
 _go2_filtered.register_all()  # velocity walker trained inside a safety filter (PORL)
 _go2_low_bar.register_all()  # 2nd RA-liveness benchmark: virtual low-bar crawl twins
 _go2_tunnel.register_all()  # crawl campaign new formulation: uniform randomized tunnel twins
