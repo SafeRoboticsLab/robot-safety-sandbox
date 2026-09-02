@@ -238,34 +238,64 @@ class ActuatorJerk(Metric):
 
 
 class InterventionMass(Metric):
-  """||pi_task - pi_filtered||_1 -- how much nominal behavior was overwritten.
+  """||pi_task - pi_filtered|| -- how far the filter moved the action.
 
-  Engagement RATE says how often the filter acted; this says how far it moved
+  Engagement RATE says how often the filter acted; this says how FAR it moved
   the action when it did, which is the axis a minimal-modification filter
-  (qcbf) is supposed to win on and a switching filter is not.
+  (qcbf) is supposed to win on and a switching filter is not. The two must be
+  read together: a rate of 1.00 with a per-dimension change of 0.5% of the
+  action range is a filter that is barely touching the policy, while the same
+  rate at 40% is a full override. Reporting the rate alone made every qcbf run
+  look identical ("intervention 1.00") when the magnitudes may differ wildly.
+
+  ``action_range`` is the width of the action box the eval clamps to ([-1, 1],
+  so 2.0); the normalized figures are fractions OF THAT, which is what makes
+  them comparable across robots with different actuator counts. The raw L1
+  ``mass`` fields are the sum over all actuated dims and are kept unchanged for
+  continuity with earlier runs -- on a 29-dof G1 they are ~29x the per-dim
+  number, which is why they read as implausibly large.
   """
 
-  def __init__(self):
+  #: a step counts as a REAL intervention when some joint moves by more than
+  #: this fraction of the action range; below it the filter is a rounding error.
+  REAL_INTERVENTION_FRAC = 0.05
+
+  def __init__(self, action_range: float = 2.0):
+    self.action_range = float(action_range)
     self.total = 0.0
     self.samples = 0
     self.engaged_total = 0.0
     self.engaged_samples = 0
+    self.per_dim_total = 0.0
+    self.per_dim_engaged_total = 0.0
+    self.real_steps = 0
 
   def update(self, rec: StepRecord) -> None:
-    d = (rec.a_filt - rec.a_nom).abs().sum(dim=-1)
+    delta = (rec.a_filt - rec.a_nom).abs()          # [N, A]
+    d = delta.sum(dim=-1)                           # L1 over actuators
+    per_dim = delta.mean(dim=-1)                    # mean |du| per actuator
     self.total += float(d.sum())
+    self.per_dim_total += float(per_dim.sum())
     self.samples += int(d.numel())
+    thresh = self.REAL_INTERVENTION_FRAC * self.action_range
+    self.real_steps += int((delta.max(dim=-1).values > thresh).sum())
     eng = getattr(rec.info, "engaged", None)
     if eng is not None and bool(eng.any()):
       self.engaged_total += float(d[eng].sum())
+      self.per_dim_engaged_total += float(per_dim[eng].sum())
       self.engaged_samples += int(eng.sum())
 
   def result(self) -> dict:
+    n, ne = max(self.samples, 1), max(self.engaged_samples, 1)
     return dict(
       intervention_mass_total=self.total,
-      intervention_mass_per_step=self.total / max(self.samples, 1),
-      intervention_mass_when_engaged=(self.engaged_total
-                                      / max(self.engaged_samples, 1)),
+      intervention_mass_per_step=self.total / n,
+      intervention_mass_when_engaged=self.engaged_total / ne,
+      # normalized, and the ones to read:
+      intervention_frac_of_range=(self.per_dim_total / n) / self.action_range,
+      intervention_frac_of_range_when_engaged=(
+        (self.per_dim_engaged_total / ne) / self.action_range),
+      intervention_frac_steps_real=self.real_steps / n,
     )
 
 
