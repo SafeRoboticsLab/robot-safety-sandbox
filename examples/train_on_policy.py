@@ -78,7 +78,7 @@ except ImportError:
 # vanilla-PPO recipe. Applied as argparse DEFAULTS, so a --config file or an
 # explicit CLI flag still wins.
 _CUMULATIVE_DEFAULTS = dict(
-  num_envs=1024, steps=150_000_000, lr=3e-4, ent_coef=5e-3,
+  num_envs=1024, steps=150_000_000, lr=3e-4, ent_coef=5e-3, n_steps=24,
   video_interval=10_000_000, adaptive_lr=False)  # stock PPO: no KL-adaptive LR
 
 # Knobs that only mean something for the SAFETY backups. In cumulative mode they
@@ -146,7 +146,8 @@ def _train_cumulative(args, outdir):
     print(f"[warm-start] loaded {args.load}")
   else:
     model = PPO(
-      "MlpPolicy", env, n_steps=24, batch_size=args.num_envs * 24 // 4, n_epochs=5,
+      "MlpPolicy", env, n_steps=args.n_steps,
+      batch_size=args.num_envs * args.n_steps // 4, n_epochs=5,
       gamma=args.gamma, gae_lambda=0.95, learning_rate=args.lr, ent_coef=args.ent_coef,
       vf_coef=args.vf_coef, clip_range=0.2, max_grad_norm=1.0,
       policy_kwargs=dict(log_std_init=math.log(0.5),
@@ -224,6 +225,11 @@ def main():
                       "config `env_overrides:` dict. Forwarded to make_tensor.")
   p.add_argument("--task", required=True, help=f"one of {list_tasks()}")
   p.add_argument("--num-envs", type=int, default=2048)
+  p.add_argument("--n-steps", type=int, default=48,
+                 help="rollout length per env. The UPDATE BATCH is num_envs * n_steps, so when a "
+                      "shared GPU forces num_envs down, doubling n_steps keeps the batch (and "
+                      "hence the recipe) unchanged instead of silently halving it. Safety default "
+                      "48; the cumulative branch defaults to 24.")
   p.add_argument("--steps", type=int, default=200_000_000)
   p.add_argument("--seed", type=int, default=0)
   p.add_argument("--load", default=None, help="warm-start model .zip (previous stage)")
@@ -412,7 +418,7 @@ def main():
   net = [int(x) for x in args.net.split(",") if x.strip()]
   model = Algo(
     "MlpPolicy", env, **akw,
-    n_steps=48, batch_size=args.num_envs * 48 // 4, n_epochs=5,
+    n_steps=args.n_steps, batch_size=args.num_envs * args.n_steps // 4, n_epochs=5,
     gamma=args.gamma, gae_lambda=0.95, learning_rate=args.lr,
     # gamma anneal (-> 0.9999) is an HJ/SAC safety-VALUE device; on PPO's GAE
     # value it makes the target near-undiscounted and the value net can diverge
