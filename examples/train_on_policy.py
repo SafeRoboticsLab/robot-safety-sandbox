@@ -225,6 +225,9 @@ def main():
                       "config `env_overrides:` dict. Forwarded to make_tensor.")
   p.add_argument("--task", required=True, help=f"one of {list_tasks()}")
   p.add_argument("--num-envs", type=int, default=2048)
+  p.add_argument("--checkpoint-every", type=int, default=25_000_000, metavar="N",
+                 help="env-steps between checkpoints (policy AND obs normalizer, on the same "
+                      "grid). A run is only as selectable as its checkpoint grid is fine.")
   p.add_argument("--n-steps", type=int, default=48,
                  help="rollout length per env. The UPDATE BATCH is num_envs * n_steps, so when a "
                       "shared GPU forces num_envs down, doubling n_steps keeps the batch (and "
@@ -437,10 +440,13 @@ def main():
         f"adaptive_lr={args.adaptive_lr} vf_coef={args.vf_coef} lr={args.lr}")
 
   cbs = [
-    CheckpointCallback(save_freq=max(1, 25_000_000 // args.num_envs),
+    CheckpointCallback(save_freq=max(1, args.checkpoint_every // args.num_envs),
                        save_path=os.path.join(outdir, "checkpoints"),
                        name_prefix="model"),
-    TensorNormSaveCallback(os.path.join(outdir, "checkpoints")),
+    # Same cadence as the policy: a checkpoint without its normalizer cannot be
+    # evaluated, so "select the checkpoint by metric" needs the pair on one grid.
+    TensorNormSaveCallback(os.path.join(outdir, "checkpoints"),
+                           save_freq_steps=args.checkpoint_every),
   ]
   if args.std_floor is not None or args.std_ceil is not None:
     cbs.append(StdFloorCallback(args.std_floor if args.std_floor is not None
