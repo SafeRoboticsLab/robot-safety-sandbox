@@ -242,6 +242,10 @@ def build_eval_env(task: str, num_envs: int, device: str = "cuda:0", *,
 
 # --- the nominal's velocity command ------------------------------------------
 
+#: Effectively "never" for a command-resampling timer, in seconds.
+_NEVER = 1.0e9
+
+
 @dataclass
 class TwistCommandSurgery:
   """Drive the nominal's velocity command from the filter's own verdict.
@@ -265,6 +269,27 @@ class TwistCommandSurgery:
   def bind(self, env: EvalEnv) -> "TwistCommandSurgery":
     self.available = self.term in getattr(
       env.mj.command_manager, "active_terms", ())
+    if self.available:
+      # FREEZE the command generator. The surgery writes the commanded velocity
+      # into the live buffer once per step, but two things then undo it:
+      # ``obs_groups()`` returns the observation CACHED at the end of the last
+      # transition, so a write lands a step late; and the command manager's own
+      # resampling timer can redraw the column in between, replacing the
+      # commanded value with a random one for several steps. The result is that
+      # ``--cmd-vx 0.6`` did not reliably mean 0.6 -- measured on the G1 walker,
+      # a pinned-config run tracked the command exactly while the surgery path
+      # drifted. An evaluation that DICTATES the command does not want the env
+      # redrawing it, so stop the resampling outright (and the standing mask,
+      # which re-zeros a fraction of envs for the same reason).
+      term = env.mj.command_manager.get_term(self.term)
+      cfg = term.cfg
+      cfg.resampling_time_range = (_NEVER, _NEVER)
+      if hasattr(cfg, "rel_standing_envs"):
+        cfg.rel_standing_envs = 0.0
+      if hasattr(term, "time_left"):
+        term.time_left[:] = _NEVER          # cancel the interval already ticking
+      if hasattr(term, "is_standing_env"):
+        term.is_standing_env[:] = False
     return self
 
   def __call__(self, env: EvalEnv, engaged: torch.Tensor,
