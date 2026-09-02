@@ -60,7 +60,11 @@ class VideoWandbCallback(BaseCallback):
       pass
 
   def _on_step(self):
-    if self.num_timesteps - self._last >= self.interval:
+    # interval <= 0 DISABLES the clips. Without this the comparison reads
+    # "0 >= 0" every step and the callback renders a video PER STEP -- the
+    # natural way to spell "no videos" silently became the most expensive
+    # possible setting, on the runs (long, shared GPU) that most need it off.
+    if self.interval > 0 and self.num_timesteps - self._last >= self.interval:
       self._last = self.num_timesteps
       self._log_video()
     return True
@@ -135,7 +139,8 @@ class DenseVideoWandbCallback(BaseCallback):
     return True
 
   def _on_rollout_end(self):
-    if self.num_timesteps - self._last >= self.interval:
+    # interval <= 0 disables the clips; see VideoWandbCallback._on_step.
+    if self.interval > 0 and self.num_timesteps - self._last >= self.interval:
       self._last = self.num_timesteps
       try:
         self._log_video()
