@@ -495,22 +495,37 @@ def main():
       print(f"[warm-start] re-inflated action std -> {args.reset_log_std} "
             f"(re-exploring around the loaded features)")
     tvn = model.env
-    pt = args.load.replace("final_model.zip", "tensornormalize.pt")
-    pkl = args.load.replace("final_model.zip", "vecnormalize.pkl")
-    if os.path.exists(pt):
+    # Locate the obs statistics that BELONG TO THIS CHECKPOINT. The string-replace this used to do
+    # only ever matched a source named exactly "final_model.zip"; warm-starting from a mid-run
+    # checkpoint (model_120000000_steps.zip -- which is what "select the checkpoint by metric"
+    # produces) silently found nothing and inherited the policy WITHOUT its normalizer. The policy
+    # then reads observations scaled by statistics it never saw, which is the same OOD failure the
+    # normalizer is supposed to prevent, in the transfer instead of at deploy. find_obs_stats pairs
+    # a checkpoint with the nearest tensornorm_<steps>.pt, and falls back to the flat name.
+    from robot_safety_sandbox.eval.policies import find_obs_stats
+    pt = find_obs_stats(args.load, "tensornorm", "tensornormalize.pt")
+    pkl = find_obs_stats(args.load, "vecnormalize", "vecnormalize.pkl")
+    if pt:
       st = th.load(pt, map_location=args.device, weights_only=True)
       tvn.obs_mean, tvn.obs_var, tvn.count = (
         st["obs_mean"].to(tvn.device), st["obs_var"].to(tvn.device),
         st["count"].to(tvn.device))
-      print(f"[warm-start] {args.load} + tensor obs stats")
-    elif os.path.exists(pkl):
+      print(f"[warm-start] {args.load} + tensor obs stats ({os.path.basename(pt)})")
+    elif pkl:
       import pickle
       with open(pkl, "rb") as f:
         vn = pickle.load(f)
       tvn.obs_mean = th.as_tensor(vn.obs_rms.mean, dtype=th.float32, device=tvn.device)
       tvn.obs_var = th.as_tensor(vn.obs_rms.var, dtype=th.float32, device=tvn.device)
       tvn.count = th.tensor(float(vn.obs_rms.count), device=tvn.device)
-      print(f"[warm-start] {args.load} + converted numpy VecNormalize stats")
+      print(f"[warm-start] {args.load} + converted numpy VecNormalize stats "
+            f"({os.path.basename(pkl)})")
+    else:
+      raise SystemExit(
+        f"[warm-start] no observation normalizer found next to {args.load}. The loaded policy was "
+        f"trained on NORMALIZED observations, so running it against fresh statistics feeds it "
+        f"inputs it has never seen. Put the run's tensornormalize.pt / tensornorm_<steps>.pt (or "
+        f"vecnormalize.pkl) beside the checkpoint.")
     cbs.append(NormFreezeCallback(args.norm_freeze_steps))
 
   if args.adversary:
