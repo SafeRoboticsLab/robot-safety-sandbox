@@ -343,6 +343,50 @@ class Engagement(Metric):
     )
 
 
+class CommandTracking(Metric):
+  """Is the robot still doing the TASK while being kept safe?
+
+  Reports body-frame forward velocity and the error against the commanded one.
+  Safety metrics alone cannot distinguish a filter that keeps a robot walking
+  from one that keeps it safe by handing over to a fallback that stands still --
+  or walks backwards, which is what a margin-only safety policy actually learns
+  (the margin contains no task term). Measured on the G1: a value fallback
+  scoring safe_rate 0.94 alone was travelling at -0.19 m/s against a commanded
+  +0.6, so its "ceiling" bought safety by abandoning the task entirely.
+
+  ``DistanceTravelled`` answers "did it move"; this answers "did it move where it
+  was ASKED to", which is the axis the safety/task frontier is drawn on.
+  """
+
+  def __init__(self, command_name: str = "twist", index: int = 0):
+    self.command_name, self.index = command_name, index
+    self.vx_total = 0.0
+    self.cmd_total = 0.0
+    self.err_total = 0.0
+    self.samples = 0
+
+  def update(self, rec: StepRecord) -> None:
+    d = rec.env.robot.data
+    vx = d.root_link_lin_vel_b[:, 0].detach()
+    self.vx_total += float(vx.sum())
+    self.samples += int(vx.numel())
+    try:
+      cmd = rec.env.mj.command_manager.get_command(self.command_name)
+      c = cmd[:, self.index].detach()
+    except Exception:
+      return
+    self.cmd_total += float(c.sum())
+    self.err_total += float((vx - c).abs().sum())
+
+  def result(self) -> dict:
+    n = max(self.samples, 1)
+    return dict(
+      track_vx_body=self.vx_total / n,
+      track_cmd_vx=self.cmd_total / n,
+      track_vx_abs_err=self.err_total / n,
+    )
+
+
 class DistanceTravelled(Metric):
   """How far the robot actually GOT, per episode -- path length and net.
 
@@ -657,4 +701,5 @@ def protocol_metrics(env, filt, *, dt: Optional[float] = None) -> MetricSet:
     WallClock(),
     Engagement(filt),
     DistanceTravelled(env.num_envs, env.device),
+    CommandTracking(),
   )

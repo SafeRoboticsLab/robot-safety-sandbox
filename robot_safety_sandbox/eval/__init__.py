@@ -30,7 +30,7 @@ from .filters import (
   FILTERS, FilterBundle, RolloutCfg, SwitchCfg, build_filter, build_shadow,
   reach_avoid_reduction)
 from .metrics import (
-  ActuatorJerk, DistanceTravelled, Engagement, EpisodeOutcomes,
+  ActuatorJerk, CommandTracking, DistanceTravelled, Engagement, EpisodeOutcomes,
   InterventionMass, MarginStats, Metric, MetricSet, StepRecord,
   TrajectoryRecorder, WallClock, protocol_metrics)
 from .policies import (
@@ -48,7 +48,7 @@ __all__ = [
   "build_shadow",
   "Metric", "MetricSet", "StepRecord", "EpisodeOutcomes", "MarginStats",
   "ActuatorJerk", "InterventionMass", "WallClock", "Engagement",
-  "DistanceTravelled", "TrajectoryRecorder",
+  "DistanceTravelled", "CommandTracking", "TrajectoryRecorder",
   "protocol_metrics",
   "load_nominal", "load_twin", "twin_class_name", "safety_modules",
   "find_obs_stats",
