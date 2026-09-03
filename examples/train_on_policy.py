@@ -484,7 +484,41 @@ def main():
     cbs.append(_StdCap())
     print(f"[ra-stable] action std capped at {args.max_std}")
   if args.load:
-    model.set_parameters(args.load, exact_match=False, device=args.device)
+    # Warm-start = load ONLY the policy weights, shape-filtered. model.set_parameters() also
+    # loads the OPTIMIZER state, whose parameter groups differ when the source has an ASYMMETRIC
+    # (privileged) critic and this twin is SYMMETRIC -> torch raises "loaded state dict contains a
+    # parameter group that doesn't match" (the E024->twin warm-start, T007). A warm-start wants
+    # fresh optimizer moments anyway (--reset-value rebuilds the optimizer below), so we skip the
+    # optimizer, and we drop source keys whose shape/name mismatch this twin (E024's asymmetric
+    # value_net.0 reads a wider critic obs and is reset here regardless). We then VERIFY the
+    # deployable-actor tensors actually moved -- if none did, the "warm-start" was a silent no-op
+    # and the run is mislabelled (the T005 set_parameters-silently-skips trap).
+    from stable_baselines3.common.save_util import load_from_zip_file as _load_zip
+    def _actor_named_params(pol):
+      return {n: p for n, p in pol.named_parameters()
+              if ("value_net" not in n) and (n != "log_std")}
+    _pre = {n: p.detach().clone() for n, p in _actor_named_params(model.policy).items()}
+    _, _wl_params, _ = _load_zip(args.load, device=args.device)
+    _wl_src = _wl_params.get("policy", {})
+    _wl_tgt = model.policy.state_dict()
+    _wl_compat = {k: v for k, v in _wl_src.items()
+                  if k in _wl_tgt and _wl_tgt[k].shape == v.shape}
+    _wl_skipped = [k for k in _wl_src if k not in _wl_compat]
+    model.policy.load_state_dict(_wl_compat, strict=False)
+    print(f"[warm-start] policy weights loaded: {len(_wl_compat)}/{len(_wl_src)} tensors "
+          f"(skipped {len(_wl_skipped)} mismatched: {_wl_skipped[:3]}); optimizer NOT loaded")
+    _post = _actor_named_params(model.policy)
+    _changed = [n for n, p in _post.items()
+                if n in _pre and not th.equal(p.detach(), _pre[n])]
+    _delta = sum((float((p.detach() - _pre[n]).norm()) for n, p in _post.items()
+                  if n in _pre), 0.0)
+    print(f"[warm-start] actor tensors changed on load: {len(_changed)}/{len(_post)} "
+          f"(total L2 delta {_delta:.4g})")
+    if not _changed:
+      raise SystemExit(
+        "[warm-start] NO actor tensor changed on load -- the checkpoint's actor keys did not "
+        "match this policy, so the warm-start loaded nothing. Check the net shape / obs dim of "
+        "--load against this recipe.")
     if args.reset_value:
       from functools import partial
       pol = model.policy
