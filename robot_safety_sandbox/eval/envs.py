@@ -281,7 +281,12 @@ class TwistCommandSurgery:
       # drifted. An evaluation that DICTATES the command does not want the env
       # redrawing it, so stop the resampling outright (and the standing mask,
       # which re-zeros a fraction of envs for the same reason).
-      term = env.mj.command_manager.get_term(self.term)
+      # A stub / shadow manager without get_term (unit tests, shadow envs) gets the
+      # per-step write only -- the freeze needs the real CommandTerm.
+      get_term = getattr(env.mj.command_manager, "get_term", None)
+      if get_term is None:
+        return self
+      term = get_term(self.term)
       cfg = term.cfg
       cfg.resampling_time_range = (_NEVER, _NEVER)
       if hasattr(cfg, "rel_standing_envs"):
