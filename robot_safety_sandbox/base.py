@@ -207,12 +207,20 @@ class _MjlabCore:
                  adversary_body, render_mode, obs_key=None, dense_reward=False,
                  dstb_mode="wrench", dstb_gain=0.25, hybrid_skill=None,
                  latch_margin_fn=None, end_criterion="failure",
-                 cfg_overrides=None, dense_margins=False):
+                 cfg_overrides=None, dense_margins=False, action_bound=1.0):
     self.obs_key = obs_key  # resolved after first reset (auto-detect)
     self.end_criterion = str(end_criterion)
     self.ctrl_dim = int(ctrl_dim)
     self.dstb_dim = int(dstb_dim)
     self.ctrl_gain = float(ctrl_gain)
+    # The learner samples an UNBOUNDED Gaussian action; the bridge's action space is the box the
+    # rollout clamps it to before it reaches the env. The mjlab JointPositionAction has NO clip of
+    # its own (rsl_rl does not clamp either), so THIS +-action_bound is the only limit on the
+    # per-joint position delta = scale * action. The historical default 1.0 caps a G1 knee at
+    # scale*ctrl_gain = 0.53 rad (a stride cap that made the walker shuffle, T006); a task whose
+    # mjlab action term has no clip should pass a WIDE bound so the policy can use the stride it
+    # needs. Kept at 1.0 by default so every existing task is byte-for-byte unchanged.
+    self.action_bound = float(action_bound)
     self.force_max = float(force_max)
     # dstb channel: "wrench" = external force on adversary_body (legged tasks);
     # "action" = ACTION-ADDITIVE disturbance, ctrl += dstb_gain * a_dstb — the
@@ -288,7 +296,8 @@ class _MjlabCore:
     obs_space = spaces.Box(-np.inf, np.inf, shape=(int(obs0.shape[1]),),
                            dtype=np.float32)
     act_dim = self.ctrl_dim + (self.dstb_dim if self.adversary else 0)
-    act_space = spaces.Box(-1.0, 1.0, shape=(act_dim,), dtype=np.float32)
+    b = self.action_bound
+    act_space = spaces.Box(-b, b, shape=(act_dim,), dtype=np.float32)
     return obs_space, act_space
 
   def _apply_dstb(self, a_dstb: torch.Tensor) -> None:
@@ -488,7 +497,7 @@ class MjlabTensorSafetyEnv(_MjlabCore, TensorVecEnv):
                render_mode=None, obs_key=None, dense_reward=False,
                dstb_mode="wrench", dstb_gain=0.25, hybrid_skill=None,
                  latch_margin_fn=None, end_criterion="failure",
-               cfg_overrides=None, dense_margins=False):
+               cfg_overrides=None, dense_margins=False, action_bound=1.0):
     if not _HAS_SAFETY_SB3:
       raise ImportError(
         "safety_sb3 is required for the tensor bridge (pip install it or put "
@@ -501,7 +510,8 @@ class MjlabTensorSafetyEnv(_MjlabCore, TensorVecEnv):
       render_mode=render_mode, obs_key=obs_key, dense_reward=dense_reward,
       dstb_mode=dstb_mode, dstb_gain=dstb_gain, hybrid_skill=hybrid_skill,
       latch_margin_fn=latch_margin_fn, end_criterion=end_criterion,
-      cfg_overrides=cfg_overrides, dense_margins=dense_margins)
+      cfg_overrides=cfg_overrides, dense_margins=dense_margins,
+      action_bound=action_bound)
     TensorVecEnv.__init__(self, int(num_envs), obs_space, act_space, device)
 
   def reset(self) -> torch.Tensor:
@@ -537,7 +547,7 @@ class MjlabNumpySafetyEnv(_MjlabCore, VecEnv):
                obs_key=None, dense_reward=False, dstb_mode="wrench",
                dstb_gain=0.25, hybrid_skill=None, latch_margin_fn=None,
                end_criterion="failure", cfg_overrides=None,
-               dense_margins=False):
+               dense_margins=False, action_bound=1.0):
     obs_space, act_space = self._init_core(
       num_envs, device, cfg_builder, margin_fn, ctrl_dim=ctrl_dim,
       dstb_dim=dstb_dim, ctrl_gain=ctrl_gain, force_max=force_max,
@@ -545,7 +555,8 @@ class MjlabNumpySafetyEnv(_MjlabCore, VecEnv):
       render_mode=render_mode, obs_key=obs_key, dense_reward=dense_reward,
       dstb_mode=dstb_mode, dstb_gain=dstb_gain, hybrid_skill=hybrid_skill,
       latch_margin_fn=latch_margin_fn, end_criterion=end_criterion,
-      cfg_overrides=cfg_overrides, dense_margins=dense_margins)
+      cfg_overrides=cfg_overrides, dense_margins=dense_margins,
+      action_bound=action_bound)
     self._device = device
     VecEnv.__init__(self, int(num_envs), obs_space, act_space)
     self._actions = None

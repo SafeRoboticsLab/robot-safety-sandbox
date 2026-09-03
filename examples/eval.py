@@ -89,6 +89,10 @@ def build_parser(pre_args):
   p.add_argument("--engaged-cmd-vx", type=float, default=1.0,
                  help="command held while the FALLBACK drives -- the value the "
                       "safety policy was trained under (feeding it 0 is OOD)")
+  p.add_argument("--action-bound", type=float, default=1.0,
+                 help="clamp the NOMINAL policy's action to +-this (the bridge action_bound it was "
+                      "trained under). Default 1.0 = the historical box; a policy trained unclamped "
+                      "must pass its wide bound so it is not silently re-clipped at eval (T006)")
   p.add_argument("--no-command-surgery", action="store_true",
                  help="do not drive the velocity command from the filter's "
                       "verdict (see eval/envs.py TwistCommandSurgery)")
@@ -259,8 +263,12 @@ def main():
           f"({mods['twin']})")
     task_policy = TwinNominal(mods["fallback_fn"], norm)
   elif args.task_policy:
+    # Clamp the nominal to the SAME action bound it was TRAINED under (--action-bound, passed by rsf
+    # from interface.action.clip — the same source the compiler uses for the bridge). NOT a hardcoded
+    # +-1: an unclamped-trained walker re-clipped to +-1 here would be a different policy at eval than
+    # in training, silently corrupting every speed number (T006).
     task_policy = NominalPolicy(*load_nominal(args.task_policy, device),
-                                device=device)
+                                device=device, bound=args.action_bound)
   else:
     print("[task-policy] none: zero action (fallback-only run)")
     task_policy = ZeroNominal(env.num_envs, env.ctrl_dim, device)
