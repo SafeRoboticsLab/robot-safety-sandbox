@@ -207,12 +207,30 @@ class _MjlabCore:
                  adversary_body, render_mode, obs_key=None, dense_reward=False,
                  dstb_mode="wrench", dstb_gain=0.25, hybrid_skill=None,
                  latch_margin_fn=None, end_criterion="failure",
-                 cfg_overrides=None, dense_margins=False):
+                 cfg_overrides=None, dense_margins=False, action_bound=1.0,
+                 critic_obs_key=None):
     self.obs_key = obs_key  # resolved after first reset (auto-detect)
+    # Privileged (asymmetric) critic obs group. OPT-IN: surfaced to the learner
+    # ONLY when critic_obs_key is explicitly requested (the factory passes it when
+    # the spec's interface.observation.privileged is set). The one-group (symmetric)
+    # path stays the DEFAULT — a cfg that merely HAPPENS to emit a distinct "critic"
+    # group (e.g. the vendored velocity cfgs) is left untouched, so existing runs
+    # are byte-identical. Resolved after the first reset.
+    self._critic_obs_key_req = critic_obs_key
+    self.critic_obs_key = None
+    self.critic_observation_space = None
     self.end_criterion = str(end_criterion)
     self.ctrl_dim = int(ctrl_dim)
     self.dstb_dim = int(dstb_dim)
     self.ctrl_gain = float(ctrl_gain)
+    # The learner samples an UNBOUNDED Gaussian action; the bridge's action space is the box the
+    # rollout clamps it to before it reaches the env. The mjlab JointPositionAction has NO clip of
+    # its own (rsl_rl does not clamp either), so THIS +-action_bound is the only limit on the
+    # per-joint position delta = scale * action. The historical default 1.0 caps a G1 knee at
+    # scale*ctrl_gain = 0.53 rad (a stride cap that made the walker shuffle, T006); a task whose
+    # mjlab action term has no clip should pass a WIDE bound so the policy can use the stride it
+    # needs. Kept at 1.0 by default so every existing task is byte-for-byte unchanged.
+    self.action_bound = float(action_bound)
     self.force_max = float(force_max)
     # dstb channel: "wrench" = external force on adversary_body (legged tasks);
     # "action" = ACTION-ADDITIVE disturbance, ctrl += dstb_gain * a_dstb — the
@@ -287,8 +305,28 @@ class _MjlabCore:
     self.mj._zoo_last_obs = obs0.float()
     obs_space = spaces.Box(-np.inf, np.inf, shape=(int(obs0.shape[1]),),
                            dtype=np.float32)
+    # Privileged critic group (asymmetric critic). The cfg's "critic" group is
+    # computed every step and normally discarded (the learner consumes one group).
+    # Surface it to the learner ONLY when explicitly requested (critic_obs_key set
+    # by the factory when the spec asks for a privileged critic) — never merely
+    # because a distinct "critic" group exists, so the one-group path is the
+    # default and existing runs are unchanged.
+    if self._critic_obs_key_req is not None:
+      ck = self._critic_obs_key_req
+      if ck not in obs_dict:
+        raise ValueError(
+          f"critic_obs_key={ck!r} not among the cfg's observation groups "
+          f"{list(obs_dict)}; the privileged critic needs that group in the env cfg.")
+      if ck == self.obs_key:
+        raise ValueError(
+          f"critic_obs_key={ck!r} is the actor group — the privileged critic needs a "
+          f"DISTINCT group (add base_lin_vel etc. to it).")
+      self.critic_obs_key = ck
+      self.critic_observation_space = spaces.Box(
+        -np.inf, np.inf, shape=(int(obs_dict[ck].shape[1]),), dtype=np.float32)
     act_dim = self.ctrl_dim + (self.dstb_dim if self.adversary else 0)
-    act_space = spaces.Box(-1.0, 1.0, shape=(act_dim,), dtype=np.float32)
+    b = self.action_bound
+    act_space = spaces.Box(-b, b, shape=(act_dim,), dtype=np.float32)
     return obs_space, act_space
 
   def _apply_dstb(self, a_dstb: torch.Tensor) -> None:
@@ -398,6 +436,19 @@ class _MjlabCore:
     """
     return self._obs_dict
 
+  def critic_obs(self):
+    """The RAW privileged critic obs of the last transition, or None.
+
+    The asymmetric-critic value net reads this (base_lin_vel etc.); the actor
+    never does, and it is discarded at deploy. Returns None unless the cfg emits
+    a distinct privileged "critic" group (see :meth:`_init_core`). The group is
+    already recomputed every step in ``_obs_dict`` — this only exposes it, adding
+    no new computation. NaN-sanitized to match the actor obs path."""
+    if self.critic_obs_key is None:
+      return None
+    c = self._obs_dict[self.critic_obs_key].float()
+    return torch.nan_to_num(c, nan=0.0, posinf=0.0, neginf=0.0)
+
   def safety_margins(self) -> tuple[torch.Tensor, torch.Tensor]:
     """The task's (g, l) for the last step, on a DENSE-reward env.
 
@@ -488,7 +539,8 @@ class MjlabTensorSafetyEnv(_MjlabCore, TensorVecEnv):
                render_mode=None, obs_key=None, dense_reward=False,
                dstb_mode="wrench", dstb_gain=0.25, hybrid_skill=None,
                  latch_margin_fn=None, end_criterion="failure",
-               cfg_overrides=None, dense_margins=False):
+               cfg_overrides=None, dense_margins=False, action_bound=1.0,
+               critic_obs_key=None):
     if not _HAS_SAFETY_SB3:
       raise ImportError(
         "safety_sb3 is required for the tensor bridge (pip install it or put "
@@ -501,7 +553,8 @@ class MjlabTensorSafetyEnv(_MjlabCore, TensorVecEnv):
       render_mode=render_mode, obs_key=obs_key, dense_reward=dense_reward,
       dstb_mode=dstb_mode, dstb_gain=dstb_gain, hybrid_skill=hybrid_skill,
       latch_margin_fn=latch_margin_fn, end_criterion=end_criterion,
-      cfg_overrides=cfg_overrides, dense_margins=dense_margins)
+      cfg_overrides=cfg_overrides, dense_margins=dense_margins,
+      action_bound=action_bound, critic_obs_key=critic_obs_key)
     TensorVecEnv.__init__(self, int(num_envs), obs_space, act_space, device)
 
   def reset(self) -> torch.Tensor:
@@ -537,7 +590,7 @@ class MjlabNumpySafetyEnv(_MjlabCore, VecEnv):
                obs_key=None, dense_reward=False, dstb_mode="wrench",
                dstb_gain=0.25, hybrid_skill=None, latch_margin_fn=None,
                end_criterion="failure", cfg_overrides=None,
-               dense_margins=False):
+               dense_margins=False, action_bound=1.0, critic_obs_key=None):
     obs_space, act_space = self._init_core(
       num_envs, device, cfg_builder, margin_fn, ctrl_dim=ctrl_dim,
       dstb_dim=dstb_dim, ctrl_gain=ctrl_gain, force_max=force_max,
@@ -545,7 +598,8 @@ class MjlabNumpySafetyEnv(_MjlabCore, VecEnv):
       render_mode=render_mode, obs_key=obs_key, dense_reward=dense_reward,
       dstb_mode=dstb_mode, dstb_gain=dstb_gain, hybrid_skill=hybrid_skill,
       latch_margin_fn=latch_margin_fn, end_criterion=end_criterion,
-      cfg_overrides=cfg_overrides, dense_margins=dense_margins)
+      cfg_overrides=cfg_overrides, dense_margins=dense_margins,
+      action_bound=action_bound, critic_obs_key=critic_obs_key)
     self._device = device
     VecEnv.__init__(self, int(num_envs), obs_space, act_space)
     self._actions = None

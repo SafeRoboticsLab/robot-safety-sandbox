@@ -78,7 +78,7 @@ except ImportError:
 # vanilla-PPO recipe. Applied as argparse DEFAULTS, so a --config file or an
 # explicit CLI flag still wins.
 _CUMULATIVE_DEFAULTS = dict(
-  num_envs=1024, steps=150_000_000, lr=3e-4, ent_coef=5e-3,
+  num_envs=1024, steps=150_000_000, lr=3e-4, ent_coef=5e-3, n_steps=24,
   video_interval=10_000_000, adaptive_lr=False)  # stock PPO: no KL-adaptive LR
 
 # Knobs that only mean something for the SAFETY backups. In cumulative mode they
@@ -146,7 +146,8 @@ def _train_cumulative(args, outdir):
     print(f"[warm-start] loaded {args.load}")
   else:
     model = PPO(
-      "MlpPolicy", env, n_steps=24, batch_size=args.num_envs * 24 // 4, n_epochs=5,
+      "MlpPolicy", env, n_steps=args.n_steps,
+      batch_size=args.num_envs * args.n_steps // 4, n_epochs=5,
       gamma=args.gamma, gae_lambda=0.95, learning_rate=args.lr, ent_coef=args.ent_coef,
       vf_coef=args.vf_coef, clip_range=0.2, max_grad_norm=1.0,
       policy_kwargs=dict(log_std_init=math.log(0.5),
@@ -224,6 +225,14 @@ def main():
                       "config `env_overrides:` dict. Forwarded to make_tensor.")
   p.add_argument("--task", required=True, help=f"one of {list_tasks()}")
   p.add_argument("--num-envs", type=int, default=2048)
+  p.add_argument("--checkpoint-every", type=int, default=25_000_000, metavar="N",
+                 help="env-steps between checkpoints (policy AND obs normalizer, on the same "
+                      "grid). A run is only as selectable as its checkpoint grid is fine.")
+  p.add_argument("--n-steps", type=int, default=48,
+                 help="rollout length per env. The UPDATE BATCH is num_envs * n_steps, so when a "
+                      "shared GPU forces num_envs down, doubling n_steps keeps the batch (and "
+                      "hence the recipe) unchanged instead of silently halving it. Safety default "
+                      "48; the cumulative branch defaults to 24.")
   p.add_argument("--steps", type=int, default=200_000_000)
   p.add_argument("--seed", type=int, default=0)
   p.add_argument("--load", default=None, help="warm-start model .zip (previous stage)")
@@ -412,7 +421,7 @@ def main():
   net = [int(x) for x in args.net.split(",") if x.strip()]
   model = Algo(
     "MlpPolicy", env, **akw,
-    n_steps=48, batch_size=args.num_envs * 48 // 4, n_epochs=5,
+    n_steps=args.n_steps, batch_size=args.num_envs * args.n_steps // 4, n_epochs=5,
     gamma=args.gamma, gae_lambda=0.95, learning_rate=args.lr,
     # gamma anneal (-> 0.9999) is an HJ/SAC safety-VALUE device; on PPO's GAE
     # value it makes the target near-undiscounted and the value net can diverge
@@ -431,10 +440,13 @@ def main():
         f"adaptive_lr={args.adaptive_lr} vf_coef={args.vf_coef} lr={args.lr}")
 
   cbs = [
-    CheckpointCallback(save_freq=max(1, 25_000_000 // args.num_envs),
+    CheckpointCallback(save_freq=max(1, args.checkpoint_every // args.num_envs),
                        save_path=os.path.join(outdir, "checkpoints"),
                        name_prefix="model"),
-    TensorNormSaveCallback(os.path.join(outdir, "checkpoints")),
+    # Same cadence as the policy: a checkpoint without its normalizer cannot be
+    # evaluated, so "select the checkpoint by metric" needs the pair on one grid.
+    TensorNormSaveCallback(os.path.join(outdir, "checkpoints"),
+                           save_freq_steps=args.checkpoint_every),
   ]
   if args.std_floor is not None or args.std_ceil is not None:
     cbs.append(StdFloorCallback(args.std_floor if args.std_floor is not None
@@ -472,7 +484,41 @@ def main():
     cbs.append(_StdCap())
     print(f"[ra-stable] action std capped at {args.max_std}")
   if args.load:
-    model.set_parameters(args.load, exact_match=False, device=args.device)
+    # Warm-start = load ONLY the policy weights, shape-filtered. model.set_parameters() also
+    # loads the OPTIMIZER state, whose parameter groups differ when the source has an ASYMMETRIC
+    # (privileged) critic and this twin is SYMMETRIC -> torch raises "loaded state dict contains a
+    # parameter group that doesn't match" (the E024->twin warm-start, T007). A warm-start wants
+    # fresh optimizer moments anyway (--reset-value rebuilds the optimizer below), so we skip the
+    # optimizer, and we drop source keys whose shape/name mismatch this twin (E024's asymmetric
+    # value_net.0 reads a wider critic obs and is reset here regardless). We then VERIFY the
+    # deployable-actor tensors actually moved -- if none did, the "warm-start" was a silent no-op
+    # and the run is mislabelled (the T005 set_parameters-silently-skips trap).
+    from stable_baselines3.common.save_util import load_from_zip_file as _load_zip
+    def _actor_named_params(pol):
+      return {n: p for n, p in pol.named_parameters()
+              if ("value_net" not in n) and (n != "log_std")}
+    _pre = {n: p.detach().clone() for n, p in _actor_named_params(model.policy).items()}
+    _, _wl_params, _ = _load_zip(args.load, device=args.device)
+    _wl_src = _wl_params.get("policy", {})
+    _wl_tgt = model.policy.state_dict()
+    _wl_compat = {k: v for k, v in _wl_src.items()
+                  if k in _wl_tgt and _wl_tgt[k].shape == v.shape}
+    _wl_skipped = [k for k in _wl_src if k not in _wl_compat]
+    model.policy.load_state_dict(_wl_compat, strict=False)
+    print(f"[warm-start] policy weights loaded: {len(_wl_compat)}/{len(_wl_src)} tensors "
+          f"(skipped {len(_wl_skipped)} mismatched: {_wl_skipped[:3]}); optimizer NOT loaded")
+    _post = _actor_named_params(model.policy)
+    _changed = [n for n, p in _post.items()
+                if n in _pre and not th.equal(p.detach(), _pre[n])]
+    _delta = sum((float((p.detach() - _pre[n]).norm()) for n, p in _post.items()
+                  if n in _pre), 0.0)
+    print(f"[warm-start] actor tensors changed on load: {len(_changed)}/{len(_post)} "
+          f"(total L2 delta {_delta:.4g})")
+    if not _changed:
+      raise SystemExit(
+        "[warm-start] NO actor tensor changed on load -- the checkpoint's actor keys did not "
+        "match this policy, so the warm-start loaded nothing. Check the net shape / obs dim of "
+        "--load against this recipe.")
     if args.reset_value:
       from functools import partial
       pol = model.policy
@@ -495,22 +541,37 @@ def main():
       print(f"[warm-start] re-inflated action std -> {args.reset_log_std} "
             f"(re-exploring around the loaded features)")
     tvn = model.env
-    pt = args.load.replace("final_model.zip", "tensornormalize.pt")
-    pkl = args.load.replace("final_model.zip", "vecnormalize.pkl")
-    if os.path.exists(pt):
+    # Locate the obs statistics that BELONG TO THIS CHECKPOINT. The string-replace this used to do
+    # only ever matched a source named exactly "final_model.zip"; warm-starting from a mid-run
+    # checkpoint (model_120000000_steps.zip -- which is what "select the checkpoint by metric"
+    # produces) silently found nothing and inherited the policy WITHOUT its normalizer. The policy
+    # then reads observations scaled by statistics it never saw, which is the same OOD failure the
+    # normalizer is supposed to prevent, in the transfer instead of at deploy. find_obs_stats pairs
+    # a checkpoint with the nearest tensornorm_<steps>.pt, and falls back to the flat name.
+    from robot_safety_sandbox.eval.policies import find_obs_stats
+    pt = find_obs_stats(args.load, "tensornorm", "tensornormalize.pt")
+    pkl = find_obs_stats(args.load, "vecnormalize", "vecnormalize.pkl")
+    if pt:
       st = th.load(pt, map_location=args.device, weights_only=True)
       tvn.obs_mean, tvn.obs_var, tvn.count = (
         st["obs_mean"].to(tvn.device), st["obs_var"].to(tvn.device),
         st["count"].to(tvn.device))
-      print(f"[warm-start] {args.load} + tensor obs stats")
-    elif os.path.exists(pkl):
+      print(f"[warm-start] {args.load} + tensor obs stats ({os.path.basename(pt)})")
+    elif pkl:
       import pickle
       with open(pkl, "rb") as f:
         vn = pickle.load(f)
       tvn.obs_mean = th.as_tensor(vn.obs_rms.mean, dtype=th.float32, device=tvn.device)
       tvn.obs_var = th.as_tensor(vn.obs_rms.var, dtype=th.float32, device=tvn.device)
       tvn.count = th.tensor(float(vn.obs_rms.count), device=tvn.device)
-      print(f"[warm-start] {args.load} + converted numpy VecNormalize stats")
+      print(f"[warm-start] {args.load} + converted numpy VecNormalize stats "
+            f"({os.path.basename(pkl)})")
+    else:
+      raise SystemExit(
+        f"[warm-start] no observation normalizer found next to {args.load}. The loaded policy was "
+        f"trained on NORMALIZED observations, so running it against fresh statistics feeds it "
+        f"inputs it has never seen. Put the run's tensornormalize.pt / tensornorm_<steps>.pt (or "
+        f"vecnormalize.pkl) beside the checkpoint.")
     cbs.append(NormFreezeCallback(args.norm_freeze_steps))
 
   if args.adversary:

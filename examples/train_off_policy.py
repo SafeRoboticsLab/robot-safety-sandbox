@@ -232,6 +232,9 @@ def main():
   p.add_argument("--eval-envs", type=int, default=128,
                  help="parallel envs in the (separate) eval env")
   p.add_argument("--video-interval", type=int, default=5_000_000)
+  p.add_argument("--checkpoint-every", type=int, default=25_000_000, metavar="N",
+                 help="env-steps between checkpoints (policy AND obs normalizer, on the same "
+                      "grid). A run is only as selectable as its checkpoint grid is fine.")
   # --- adversary force curriculum (two-player only) ---
   p.add_argument("--force-max", type=float, default=50.0)
   p.add_argument("--force-ramp-frac", type=float, default=0.55)
@@ -414,10 +417,13 @@ def main():
 
   # --- callbacks ---
   cbs = [
-    CheckpointCallback(save_freq=max(1, 25_000_000 // args.num_envs),
+    CheckpointCallback(save_freq=max(1, args.checkpoint_every // args.num_envs),
                        save_path=os.path.join(outdir, "checkpoints"),
                        name_prefix="model"),
-    TensorNormSaveCallback(os.path.join(outdir, "checkpoints")),
+    # Same cadence as the policy: a checkpoint without its normalizer cannot be
+    # evaluated, so selecting a checkpoint by metric needs the pair on one grid.
+    TensorNormSaveCallback(os.path.join(outdir, "checkpoints"),
+                           save_freq_steps=args.checkpoint_every),
   ]
   # VARIANT-CONDITIONAL: adversary force curriculum (two-player only).
   if two_player:

@@ -32,15 +32,21 @@ class NominalPolicy:
   everything else is torch on the device.
   """
 
-  def __init__(self, model, vecnormalize=None, device: str = "cuda:0"):
+  def __init__(self, model, vecnormalize=None, device: str = "cuda:0",
+               bound: float = 1.0):
     self.model, self.vn, self.device = model, vecnormalize, device
+    # The action clamp MUST match what the policy was TRAINED under (the bridge's action_bound). A
+    # policy trained unclamped (wide bound) but re-clipped to +-1 here would be a DIFFERENT policy at
+    # eval than in training, silently corrupting every speed number (T006). Pass the spec's
+    # interface.action.clip so the two read the same source; default 1.0 is the historical bound.
+    self.bound = float(bound)
 
   def __call__(self, obs: torch.Tensor) -> torch.Tensor:
     o = obs.detach().cpu().numpy()
     if self.vn is not None:
       o = self.vn.normalize_obs(o)
     a, _ = self.model.predict(o, deterministic=True)
-    return torch.as_tensor(np.clip(a, -1, 1), dtype=torch.float32,
+    return torch.as_tensor(np.clip(a, -self.bound, self.bound), dtype=torch.float32,
                            device=self.device)
 
 
