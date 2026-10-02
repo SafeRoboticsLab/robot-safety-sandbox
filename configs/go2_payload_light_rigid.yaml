@@ -1,0 +1,32 @@
+# T001/E042 STEP-1 specialist (light_rigid) — FIXED-θ, SOUND 0.4.0 critic. Redo of E014's bifurcation on 0.4.0:
+# does a fixed-θ specialist LEARN (escape the doom fixed point that collapsed E039's randomized step 2)?
+# Same recipe as go2_payload_blind; only task=specialist + 20M steps.
+#   python examples/train.py --config configs/go2_payload_blind.yaml
+family: off_policy
+task: go2_payload_light_rigid
+adversary: true
+num_envs: 512
+steps: 20000000              # step-1 diagnostic (matches E014); collapse/escape shows by ~10M
+seed: 0
+out: results/go2_payload_runs
+wandb_project: odd-conditioned
+
+# --- SAC hypers (identical to the conditioned arm — the ONLY difference is theta in the obs) ---
+lr: 1.0e-4
+tau: 0.01
+target_update_interval: 2
+ent_coef: auto_0.1
+buffer_size: 1000000
+batch_size: 4096
+gradient_steps: 4
+
+gamma_schedule: step         # 0.99 -> 0.999 @4M -> 0.9999 @8M, then HOLD 0.9999 to 50M
+gamma_init: 0.99
+gamma_end: 0.9999
+gamma_period_frac: 0.2       # jumps at 4M & 8M absolute (same as the blind/E039 recipe)
+min_alpha: 0.001
+
+leaderboard_freq: 2000000
+leaderboard_episodes: 3
+eval_rollouts: 100
+eval_freq: 2000000

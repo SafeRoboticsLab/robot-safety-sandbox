@@ -1,0 +1,29 @@
+# E078 (T004, DEMO 2) — COMPOUND STAND mode. Go2 carrying a CONSTANT high-CoM load (W=80N @ h=0.25, the
+# inverted pendulum) AND a per-episode FR-leg torque fraction θ∈[0.4,1.0] (the comfortably-feasible band ABOVE
+# the E078 gate's θ_c≈0.3), θ EXPOSED to actor+critic (the W obs is NOT added — W is constant). Target =
+# stance_margins (hold a stable stand on 3.5 legs under the pendulum + the adversarial pull). Trains
+# V_compound_stand(x, θ) — the strong-mode certificate that (unlike the UNLOADED leg-at-stance, E076, which was
+# flat) CONTRACTS as θ falls, enabling a real certified leg handoff. Same tuned two-player safety-PPO recipe as
+# the weight-ladder / leg-family arms: ReachAvoidPPO2P (entropy in the LOSS, not the value target).
+#   python examples/train.py --config configs/go2_compound_stand_ppo.yaml
+family: on_policy          # PPO family
+task: go2_compound_stand
+adversary: true            # -> ReachAvoidPPO2P (two-player)
+num_envs: 1024
+steps: 50000000
+seed: 0
+out: results/go2_compound_runs
+wandb_project: odd-conditioned
+
+# --- safety-PPO recipe (from go2_weight_stand_hi / go2_leg_stand) ---
+lr: 1.0e-4
+adaptive_lr: false         # fixed LR for the sparse safety signal
+target_kl: 0.01            # KL early-stop
+ent_coef: 1.0e-3
+max_std: 0.4               # cap action std (prevents entropy runaway)
+net: "128,128,128"
+terminal_type: all         # terminal valued as min(l,g) — correct reach-avoid anchor
+
+# smaller adversarial force range (peak 25N) so the weak-leg-under-load task is winnable; identical to the
+# REST arm so only the objective (stance vs soft-rest) and the θ range differ.
+force_max: 25.0

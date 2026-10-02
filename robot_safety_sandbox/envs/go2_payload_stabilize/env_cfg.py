@@ -127,11 +127,15 @@ def _scope_joint_obs_to_legs(cfg: ManagerBasedRlEnvCfg) -> None:
 # loads and stands; the ODD sweep varies stiffness ∈ [0, ~300] and total_mass ∈ [~0.5, ~6].
 DEFAULT_PAYLOAD = dict(n_layers=4, total_mass=3.0, stiffness=20.0, damping=0.05, profile="uniform")
 
-# Fixed-ODD SPECIALIST extremes for the bifurcation check (professor's cheap gate): does the optimal
-# strategy actually flip dodge↔brace across the ODD? Light+rigid ≈ a normal Go2 (dodge toward the pull);
-# heavy+sloshy should force a brace-in-place (moving would excite the slosh and topple).
-LIGHT_RIGID = dict(n_layers=4, total_mass=1.2, stiffness=300.0, damping=0.05, profile="uniform")
-HEAVY_SLOSHY = dict(n_layers=4, total_mass=7.0, stiffness=0.0, damping=0.05, profile="top_heavy")
+# Fixed-ODD SPECIALIST corners for the bifurcation 2×2 (E043 / T001): does the optimal strategy flip
+# dodge↔brace across the ODD? The 2 axes are MASS (1.2/7.0 kg) and RIGIDITY (stiffness 300/0). To
+# ISOLATE those two — a clean 2×2 — all four corners share profile="top_heavy"; letting profile vary
+# with an axis (the old light_rigid=uniform, heavy_sloshy=top_heavy) would confound CoM height with the
+# axes. Light+rigid ≈ a near-normal Go2 (expect dodge); heavy+sloshy should brace (moving excites slosh).
+LIGHT_RIGID  = dict(n_layers=4, total_mass=1.2, stiffness=300.0, damping=0.05, profile="top_heavy")
+LIGHT_SLOSHY = dict(n_layers=4, total_mass=1.2, stiffness=0.0,   damping=0.05, profile="top_heavy")
+HEAVY_RIGID  = dict(n_layers=4, total_mass=7.0, stiffness=300.0, damping=0.05, profile="top_heavy")
+HEAVY_SLOSHY = dict(n_layers=4, total_mass=7.0, stiffness=0.0,   damping=0.05, profile="top_heavy")
 
 # OUT-OF-DISTRIBUTION stress points (OUTSIDE training: mass > 7.5 kg, stiffness > 300) for the OOD-
 # generalization test: does the conditioned policy, given the EXTRAPOLATED theta (payload_odd reads the
@@ -237,6 +241,16 @@ def go2_payload_descent_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 def go2_payload_light_rigid_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Specialist: light + rigid payload (≈ normal Go2). Bifurcation-check extreme."""
   return _go2_payload_env_cfg(play, LIGHT_RIGID, randomize_odd=False)
+
+
+def go2_payload_light_sloshy_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Specialist: light + sloshy payload. Bifurcation 2×2 corner (light mass, sloshy)."""
+  return _go2_payload_env_cfg(play, LIGHT_SLOSHY, randomize_odd=False)
+
+
+def go2_payload_heavy_rigid_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Specialist: heavy + rigid payload. Bifurcation 2×2 corner (heavy mass, rigid)."""
+  return _go2_payload_env_cfg(play, HEAVY_RIGID, randomize_odd=False)
 
 
 def go2_payload_heavy_sloshy_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:

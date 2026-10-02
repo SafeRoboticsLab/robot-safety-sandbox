@@ -1,0 +1,27 @@
+# ODD variant — Go2 with a DEAD front-right leg (FR hip/thigh/calf actuators exert ZERO
+# torque; the leg is limp but present + readable, action stays 12-D). Trains the
+# BROKEN-robot specialist. Same tuned two-player safety-PPO recipe as the payload
+# specialists: ReachAvoidPPO2P (alternating best-response; entropy in the LOSS, not the
+# value target, so the sound {V>=0} certificate and stability are decoupled). No
+# force_ramp_frac/force_floor/force_init keys => the curriculum defaults apply.
+family: on_policy          # PPO family
+task: go2_weak_leg
+adversary: true            # -> ReachAvoidPPO2P (two-player)
+num_envs: 1024
+steps: 50000000
+seed: 0
+out: results/go2_weak_leg_runs
+wandb_project: odd-conditioned
+
+# --- safety-PPO recipe (from go2_stabilize_reachavoidppo1p) ---
+lr: 1.0e-4
+adaptive_lr: false         # fixed LR for the sparse safety signal
+target_kl: 0.01            # KL early-stop
+ent_coef: 1.0e-3
+max_std: 0.4               # cap action std (prevents entropy runaway)
+net: "128,128,128"
+terminal_type: all         # terminal valued as min(l,g) — correct reach-avoid anchor
+
+# E047 — smaller adversarial force range (peak 50->25N) so the weak-leg specialist is winnable;
+# applied to BOTH runs so the adversary is identical and only the robot dynamics differ.
+force_max: 25.0

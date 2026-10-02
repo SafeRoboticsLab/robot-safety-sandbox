@@ -1,0 +1,26 @@
+# LEG-DEGRADATION ODD — HISTORY arm. Go2 with the FR leg's allowable torque θ ∈ [0.2, 1.0] RANDOMIZED
+# per-episode, NO θ, but a K-frame (K=16) proprio+action history stack — the policy INFERS θ from the felt
+# dynamics (the deployable RMA-style alternative to a raw-θ input). Same tuned two-player safety-PPO recipe:
+# ReachAvoidPPO2P (alternating best-response; entropy in the LOSS, not the value target).
+#   python examples/train.py --config configs/go2_weak_leg_history_ppo.yaml
+family: on_policy          # PPO family
+task: go2_weak_leg_history_soft
+adversary: true            # -> ReachAvoidPPO2P (two-player)
+num_envs: 1024
+steps: 50000000
+seed: 0
+out: results/go2_weak_leg_runs
+wandb_project: odd-conditioned
+
+# --- safety-PPO recipe (from go2_stabilize_reachavoidppo1p) ---
+lr: 1.0e-4
+adaptive_lr: false         # fixed LR for the sparse safety signal
+target_kl: 0.01            # KL early-stop
+ent_coef: 1.0e-3
+max_std: 0.4               # cap action std (prevents entropy runaway)
+net: "128,128,128"
+terminal_type: all         # terminal valued as min(l,g) — correct reach-avoid anchor
+
+# E047 — smaller adversarial force range (peak 50->25N) so the weak-leg task is winnable; identical to the
+# blind + conditioned arms so the adversary is the same and only the obs surface (K-frame history) differs.
+force_max: 25.0

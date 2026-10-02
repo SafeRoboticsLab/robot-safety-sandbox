@@ -55,6 +55,7 @@ from robot_safety_sandbox.callbacks import (  # noqa: E402
   FwdForceAnnealCallback,
   GaitThreshRampCallback,
   LAnnealCallback,
+  LegDeathCallback,
   PerEnvForceScaleCallback,
   NormFreezeCallback,
   StdFloorCallback,
@@ -294,6 +295,11 @@ def main():
   p.add_argument("--adaptive-lr", action=argparse.BooleanOptionalAction,
                  default=True, help="KL-adaptive LR (locomotion); use "
                  "--no-adaptive-lr for a fixed LR on safety tasks")
+  p.add_argument("--leg-death", action=argparse.BooleanOptionalAction, default=False,
+                 help="E064 dynamic-θ leg-degradation training: attach LegDeathCallback to drive the "
+                      "FR-leg torque fraction θ per-env MID-EPISODE each step (leg dies/recovers within "
+                      "an episode). Auto-enabled for any '*_soft_dyn' task; set `leg_death: true` in a "
+                      "config to force it. No effect on the static soft tasks.")
   p.add_argument("--gamma", type=float, default=0.99,
                  help="base discount (both branches). On reach-avoid a higher "
                       "fixed gamma (0.999) lengthens the value's planning horizon "
@@ -521,6 +527,15 @@ def main():
     print(f"[adversary] force ramp 8->{args.force_max}N over "
           f"{args.force_ramp_frac:.0%}; per-env scale floor={args.force_floor} "
           f"init={args.force_init}")
+
+  # E064 dynamic-θ leg-degradation: attach LegDeathCallback ONLY for the '*_soft_dyn' tasks (or an
+  # explicit `leg_death: true`). It drives θ per-env mid-episode, SUPERSEDING the reset randomization
+  # (dropped in those env builders). Gated exactly like the adversary block above, so every other
+  # task — including the STATIC soft arms — is unaffected.
+  if args.task.endswith("_soft_dyn") or args.leg_death:
+    cbs.append(LegDeathCallback())
+    print("[leg-death] dynamic-θ training: FR torque θ driven per-env mid-episode "
+          "(theta_start,theta_end ~ U[0.2,1.0]; step change at t~U[50,200])")
 
   if not args.no_wandb:
     import wandb

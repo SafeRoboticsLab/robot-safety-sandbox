@@ -331,6 +331,86 @@ class GaitThreshRampCallback(BaseCallback):
     return True
 
 
+class LegDeathCallback(BaseCallback):
+  """E064 — DYNAMIC-θ leg-degradation TRAINING: drive the FR-leg allowable-torque
+  fraction θ per-env, MID-EPISODE, every training step, so the policies PRACTICE the
+  leg-death transition (the static soft arms only ever saw θ fixed within an episode).
+
+  Per-env schedule (re-sampled whenever an env resets): θ starts at ``theta_start``,
+  STEP-changes to ``theta_end`` at step ``t_change`` (a leg dying / recovering / holding
+  mid-episode). ``theta_start≈theta_end`` degenerates to the static case, so the full
+  span — static + dynamic — is covered in one distribution:
+
+      theta_start ~ U[lo, hi]   theta_end ~ U[lo, hi]   t_change ~ U[tc_lo, tc_hi] steps
+      θ(step) = theta_start if env_step < t_change else theta_end
+
+  Each step, for ALL worlds, it writes θ ABSOLUTELY from the cached nominal forcerange
+  (``actuator_forcerange[:, fr_ids, :] = nominal * θ[:,None,None]`` — never a multiply of
+  the current value, which would compound) and stores θ on ``env._fr_torque_frac`` (so the
+  conditioned arm's obs reads the LIVE θ). This SUPERSEDES the per-episode reset
+  randomization (the ``_soft_dyn`` env builders drop ``randomize_fr_torque``).
+
+  Reaches the inner mjlab env via the bridge (``model.env`` unwrapped through ``.venv``,
+  then ``.mj``) — same handle the eval scripts use for ``inner._fr_act_ids`` etc. Triggers
+  ``_ensure_fr_cache`` once so ``_fr_act_ids`` / ``_fr_nominal_forcerange`` / ``_fr_torque_frac``
+  exist even if no reset event allocated them."""
+
+  def __init__(self, lo=0.2, hi=1.0, tc_lo=50, tc_hi=200):
+    super().__init__()
+    self.lo, self.hi, self.tc_lo, self.tc_hi = lo, hi, tc_lo, tc_hi
+    self._inner = None
+    self._ids = None
+    self._nominal = None
+    self._env_step = None    # per-env step counter within the current episode
+    self._t_change = None    # per-env step at which θ switches start->end
+    self._th_start = None
+    self._th_end = None
+
+  def _sample(self, n, device):
+    import torch as th
+    ts = th.rand(n, device=device) * (self.hi - self.lo) + self.lo
+    te = th.rand(n, device=device) * (self.hi - self.lo) + self.lo
+    # t_change ~ U[tc_lo, tc_hi] inclusive (integer step boundary)
+    tc = th.randint(self.tc_lo, self.tc_hi + 1, (n,), device=device)
+    return ts, te, tc
+
+  def _on_training_start(self):
+    import torch as th
+    from robot_safety_sandbox.envs.go2_broken_leg.env_cfg import _ensure_fr_cache
+    e = self.model.env
+    while hasattr(e, "venv"):
+      e = e.venv
+    self._inner = e.mj                       # the mjlab ManagerBasedRlEnv
+    _ensure_fr_cache(self._inner)            # resolve ids + snapshot nominal + alloc θ store
+    self._ids = self._inner._fr_act_ids
+    self._nominal = self._inner._fr_nominal_forcerange
+    dev = self._inner.device
+    n = self._inner.num_envs
+    self._env_step = th.zeros(n, dtype=th.long, device=dev)
+    self._th_start, self._th_end, self._t_change = self._sample(n, dev)
+
+  def _on_step(self):
+    import torch as th
+    # Re-sample the schedule for envs that JUST reset (mjlab auto-reset inside mj.step),
+    # so a fresh episode starts a fresh θ trajectory from env_step 0.
+    dones = self.locals.get("dones")
+    if dones is not None and th.is_tensor(dones) and bool(dones.any()):
+      d = dones.bool()
+      n = int(d.sum())
+      ts, te, tc = self._sample(n, self._env_step.device)
+      self._th_start[d], self._th_end[d], self._t_change[d] = ts, te, tc
+      self._env_step[d] = 0
+    # θ(step): start before the switch, end after — a mid-episode STEP change.
+    theta = th.where(self._env_step < self._t_change, self._th_start, self._th_end)
+    # ABSOLUTE write from cached nominal (no compounding) + store live θ for the obs.
+    self._inner.sim.model.actuator_forcerange[:, self._ids, :] = (
+      self._nominal * theta[:, None, None])
+    self._inner._fr_torque_frac[:] = theta
+    self._env_step += 1
+    self.logger.record("legdeath/theta_mean", float(theta.mean()))
+    return True
+
+
 class ForceRampCallback(BaseCallback):
   """Two-player (2P) runs: ramp the adversary force from ``force_start``
   to ``force_max`` over ``ramp_steps`` so ctrl adapts to a strengthening

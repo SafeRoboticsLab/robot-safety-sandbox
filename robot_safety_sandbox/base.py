@@ -35,6 +35,7 @@ from gymnasium import spaces
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
+from mjlab.utils.lab_api.math import quat_apply
 
 # The tensor bridge pairs with safety_sb3 learners; the NUMPY bridge (cumulative
 # task policies, vanilla SB3) must work without safety_sb3 installed.
@@ -298,8 +299,38 @@ class _MjlabCore:
     if scale is not None:
       mag = mag * scale.reshape(-1, 1)
     forces = (unit * mag).reshape(-1, 1, 3)
+    # WEIGHT-LADDER ODD: exogenous per-env base wrench (e.g. a carried load = [0,0,-W]), ADDED to the
+    # adversary's force. Two sources, the eval override taking precedence:
+    #   (1) EVAL: `env.base_load` ([N,3] tensor) set directly on THIS (outer) bridge env per step.
+    #   (2) TRAINING: the per-episode reset event stores a per-env load W (N) on the INNER mjlab env
+    #       (`self.mj._weight_W`); build the downward load [0,0,-W] from it when no outer override is set.
+    load = getattr(self, "base_load", None)
+    W = getattr(self.mj, "_weight_W", None)
+    if load is None and W is not None:
+      load = torch.stack([torch.zeros_like(W), torch.zeros_like(W), -W], dim=1)
+    torques = self._zero_wrench
+    if load is not None:
+      forces = forces + load.reshape(-1, 1, 3)
+      # HIGH-CoM LOAD TORQUE (inverted-pendulum physics): a load carried at height h above the base link
+      # is a point mass at body-frame offset [0,0,h]. Its weight F_load=[0,0,-W] acts at the WORLD position
+      # of that offset, r_world = R(quat)·[0,0,h], producing a torque about the base τ = r_world × F_load.
+      #   * upright (quat=identity): r_world=[0,0,h] ∥ F_load ⇒ τ = 0 (no lever) — a pure downward force.
+      #   * tilted by angle a: r_world tips out of vertical, |r_world × F_load| = W·h·sin(a), and the cross
+      #     product points in the direction that INCREASES the tilt (gravity torques the raised mass FURTHER
+      #     over) — the destabilizing inverted-pendulum moment. h=0 (or _weight_h unset) ⇒ r_world=[0,0,0]
+      #     ⇒ τ=0, i.e. the old PURE-FORCE behavior, so pre-height tasks are bit-identical.
+      h = getattr(self.mj, "_weight_h", None)
+      if h is not None:
+        h = torch.as_tensor(h, device=forces.device, dtype=forces.dtype).reshape(-1)
+        if h.numel() == 1:
+          h = h.expand(forces.shape[0])
+        r_body = torch.stack([torch.zeros_like(h), torch.zeros_like(h), h], dim=1)  # [0,0,h] per env
+        quat = self._robot.data.root_link_quat_w                                    # (N,4)
+        r_world = quat_apply(quat, r_body)                                          # (N,3)
+        F_load = load.reshape(-1, 3)                                                # [0,0,-W]
+        torques = torch.linalg.cross(r_world, F_load).reshape(-1, 1, 3)
     self._robot.write_external_wrench_to_sim(
-      forces, self._zero_wrench, body_ids=self._adv_body_ids,
+      forces, torques, body_ids=self._adv_body_ids,
       env_ids=self._all_ids)
 
   def _hyb_load(self):

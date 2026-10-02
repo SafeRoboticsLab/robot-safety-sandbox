@@ -1,0 +1,22 @@
+# T001/E043 — PPO variant of the step-1 specialist (heavy_sloshy). SAC (E042) failed AND SAC 0.4.0 has a
+# timeout-bootstrap bug that confounds that result, so we switch to PPO. ReachAvoidPPO2P = two-player
+# reach-avoid PPO (alternating best-response); PPO's entropy is in the LOSS, not the value target, so
+# the sound {V>=0} certificate and training stability are decoupled. Recipe = the tuned go2_stabilize
+# safety-PPO, made two-player, at the fixed-θ specialist.
+family: on_policy          # PPO family
+task: go2_payload_heavy_sloshy
+adversary: true            # -> ReachAvoidPPO2P (two-player, matches the SAC setup)
+num_envs: 1024
+steps: 50000000
+seed: 0
+out: results/go2_payload_runs
+wandb_project: odd-conditioned
+
+# --- safety-PPO recipe (from go2_stabilize_reachavoidppo1p) ---
+lr: 1.0e-4
+adaptive_lr: false         # fixed LR for the sparse safety signal
+target_kl: 0.01            # KL early-stop
+ent_coef: 1.0e-3
+max_std: 0.4               # cap action std (prevents entropy runaway)
+net: "128,128,128"
+terminal_type: all         # terminal valued as min(l,g) — correct reach-avoid anchor

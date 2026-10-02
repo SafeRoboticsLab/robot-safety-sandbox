@@ -1,0 +1,27 @@
+# E070 (T003, plan G2) — WEIGHT-LADDER STAND mode. Go2 carrying a per-episode downward load W∈[0,150]N
+# (applied to the base each step; see base.py's weight-load channel), W EXPOSED to actor+critic. Target =
+# stance_margins (hold a stable stand despite the load + the adversarial pull). Trains V_stand(x, W) — the
+# strong-mode certificate for the weight ladder. Same tuned two-player safety-PPO recipe as the leg soft
+# arms: ReachAvoidPPO2P (alternating best-response; entropy in the LOSS, not the value target).
+#   python examples/train.py --config configs/go2_weight_stand_ppo.yaml
+family: on_policy          # PPO family
+task: go2_weight_stand
+adversary: true            # -> ReachAvoidPPO2P (two-player)
+num_envs: 1024
+steps: 50000000
+seed: 0
+out: results/go2_weight_runs
+wandb_project: odd-conditioned
+
+# --- safety-PPO recipe (from go2_weak_leg_blind_soft_dyn) ---
+lr: 1.0e-4
+adaptive_lr: false         # fixed LR for the sparse safety signal
+target_kl: 0.01            # KL early-stop
+ent_coef: 1.0e-3
+max_std: 0.4               # cap action std (prevents entropy runaway)
+net: "128,128,128"
+terminal_type: all         # terminal valued as min(l,g) — correct reach-avoid anchor
+
+# smaller adversarial force range (peak 25N) so the loaded task is winnable; identical to the REST arm so
+# only the objective (stance vs soft-rest) and the load range differ.
+force_max: 25.0

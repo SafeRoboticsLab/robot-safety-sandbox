@@ -29,6 +29,8 @@ def register_all() -> None:
     descent_margins,
     go2_payload_heavy_sloshy_env_cfg,
     go2_payload_light_rigid_env_cfg,
+    go2_payload_light_sloshy_env_cfg,
+    go2_payload_heavy_rigid_env_cfg,
     go2_payload_ood_rigid_env_cfg,
     go2_payload_ood_sloshy_env_cfg,
     go2_payload_history_env_cfg,
@@ -59,10 +61,15 @@ def register_all() -> None:
                     description="[soft-descent fallback: reach a soft belly-down rest, contact-force safe "
                                 "set] Go2 (hidden randomized payload) lowers from standing to a low/level/"
                                 "slow belly-down rest while keeping non-foot ground contact gentle."))
+  # Bifurcation 2×2 corners (all top_heavy; mass × rigidity isolated) — E043 / T001.
   register(TaskSpec(task_id="go2_payload_light_rigid", cfg_builder=go2_payload_light_rigid_env_cfg,
-                    description="[specialist: light+rigid ~ normal Go2] " + _DESC, **common))
+                    description="[2x2: light+rigid ~ near-normal Go2] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_light_sloshy", cfg_builder=go2_payload_light_sloshy_env_cfg,
+                    description="[2x2: light+sloshy] " + _DESC, **common))
+  register(TaskSpec(task_id="go2_payload_heavy_rigid", cfg_builder=go2_payload_heavy_rigid_env_cfg,
+                    description="[2x2: heavy+rigid] " + _DESC, **common))
   register(TaskSpec(task_id="go2_payload_heavy_sloshy", cfg_builder=go2_payload_heavy_sloshy_env_cfg,
-                    description="[specialist: heavy+sloshy, brace regime] " + _DESC, **common))
+                    description="[2x2: heavy+sloshy, brace regime] " + _DESC, **common))
   # EVAL-ONLY: the conditioned policy (57-dim obs) at each fixed-ODD extreme, for the read-out.
   register(TaskSpec(task_id="go2_payload_conditioned_light_rigid",
                     cfg_builder=go2_payload_conditioned_light_rigid_env_cfg,
