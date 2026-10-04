@@ -16,6 +16,10 @@ from .tasks import digit_safety as _digit_safety
 from .tasks import go2_crawl as _go2_crawl
 from .tasks import go2_gap as _go2_gap
 from .tasks import go2_stabilize as _go2_stabilize
+from .tasks import go2_weight_ladder as _go2_weight_ladder
+from .tasks import go2_leg_family as _go2_leg_family
+from .tasks import go2_compound as _go2_compound
+from .tasks import go2_transitions as _go2_transitions
 from .tasks import go2_crawl_twins as _go2_crawl_twins
 from .tasks import go2_gap_brake_or_jump as _go2_gap_brake_or_jump
 from .tasks import go2_filtered as _go2_filtered
@@ -28,6 +32,10 @@ from .tasks import go2_velocity as _go2_velocity
 _go2_gap.register_all()
 _go2_crawl.register_all()
 _go2_stabilize.register_all()
+_go2_weight_ladder.register_all()  # weight-ladder: STAND / soft-REST modes under a carried load
+_go2_leg_family.register_all()  # leg-family: STAND / soft-REST modes over the FR-torque fraction axis
+_go2_compound.register_all()  # compound: FR-leg degradation while carrying a high-CoM load (W=80 @ h=0.25)
+_go2_transitions.register_all()  # certified transitions: GET-UP (prone) / DESCENT funnels
 _digit_safety.register_all()
 _go2_crawl_twins.register_all()
 _go2_gap_brake_or_jump.register_all()  # split test: harvested-state RA vs avoid twins
