@@ -1,0 +1,25 @@
+# WEIGHT-LADDER UNIFIED (rest_discount=0.5) baseline, HIGH-CoM (inverted-pendulum load, LOAD_HEIGHT=0.25). Go2
+# carrying W∈[0,300]N high; margin=weight_unified_margins with rest_discount=0.5 — rest target discounted so
+# standing is preferred while feasible.
+# Tuned two-player safety-PPO recipe (ReachAvoidPPO2P; entropy in the LOSS, not the value target).
+#   python examples/train.py --config configs/go2_weight_unified_disc_hi_ppo.yaml
+family: on_policy          # PPO family
+task: go2_weight_unified_disc_hi
+adversary: true            # -> ReachAvoidPPO2P (two-player)
+num_envs: 1024
+steps: 50000000
+seed: 0
+out: runs
+wandb_project: odd-conditioned
+
+# --- safety-PPO recipe ---
+lr: 1.0e-4
+adaptive_lr: false         # fixed LR for the sparse safety signal
+target_kl: 0.01            # KL early-stop
+ent_coef: 1.0e-3
+max_std: 0.4               # cap action std (prevents entropy runaway)
+net: "128,128,128"
+terminal_type: all         # terminal valued as min(l,g) — correct reach-avoid anchor
+
+# smaller adversarial force range (peak 25N) so the loaded task is winnable; identical across all arms.
+force_max: 25.0

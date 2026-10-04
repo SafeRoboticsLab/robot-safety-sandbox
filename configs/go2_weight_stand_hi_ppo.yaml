@@ -1,0 +1,24 @@
+# WEIGHT-LADDER STAND mode, HIGH-CoM (inverted-pendulum load, LOAD_HEIGHT=0.25). Go2 carrying W∈[0,150]N high;
+# target=stance_margins (hold a stand despite the load torque + adversary). Trains V_stand(x,W).
+# Tuned two-player safety-PPO recipe (ReachAvoidPPO2P; entropy in the LOSS, not the value target).
+#   python examples/train.py --config configs/go2_weight_stand_hi_ppo.yaml
+family: on_policy          # PPO family
+task: go2_weight_stand_hi
+adversary: true            # -> ReachAvoidPPO2P (two-player)
+num_envs: 1024
+steps: 50000000
+seed: 0
+out: runs
+wandb_project: odd-conditioned
+
+# --- safety-PPO recipe ---
+lr: 1.0e-4
+adaptive_lr: false         # fixed LR for the sparse safety signal
+target_kl: 0.01            # KL early-stop
+ent_coef: 1.0e-3
+max_std: 0.4               # cap action std (prevents entropy runaway)
+net: "128,128,128"
+terminal_type: all         # terminal valued as min(l,g) — correct reach-avoid anchor
+
+# smaller adversarial force range (peak 25N) so the loaded task is winnable; identical across all arms.
+force_max: 25.0

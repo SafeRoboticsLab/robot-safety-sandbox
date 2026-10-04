@@ -1,0 +1,26 @@
+# CERTIFIED TRANSITION: DESCENT funnel RA_stand→rest (dedicated), HIGH-CoM (inverted-pendulum
+# load, LOAD_HEIGHT=0.25). Go2 spawned in DISTURBED standing (base tilt + lateral velocity) under a HEAVY
+# carried load W∈[80,260]N; g=no-slam (<80+1.3W N), target=low+level+settled rest — come down softly to a
+# full rest from an off-balance heavy start. Trains a dedicated V_stand→rest.
+# Tuned two-player safety-PPO recipe (ReachAvoidPPO2P; entropy in the LOSS, not the value target).
+#   python examples/train.py --config configs/go2_descend_ppo.yaml
+family: on_policy          # PPO family
+task: go2_descend
+adversary: true            # -> ReachAvoidPPO2P (two-player)
+num_envs: 1024
+steps: 50000000
+seed: 0
+out: runs
+wandb_project: odd-conditioned
+
+# --- safety-PPO recipe ---
+lr: 1.0e-4
+adaptive_lr: false         # fixed LR for the sparse safety signal
+target_kl: 0.01            # KL early-stop
+ent_coef: 1.0e-3
+max_std: 0.4               # cap action std (prevents entropy runaway)
+net: "128,128,128"
+terminal_type: all         # terminal valued as min(l,g) — correct reach-avoid anchor
+
+# smaller adversarial force range (peak 25N) so the loaded task is winnable; identical across all arms.
+force_max: 25.0

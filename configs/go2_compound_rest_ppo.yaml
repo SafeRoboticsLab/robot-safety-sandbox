@@ -1,0 +1,30 @@
+# COMPOUND REST mode. Go2 carrying a CONSTANT high-CoM load (W=80N @ h=0.25) AND a
+# per-episode FR-leg torque fraction θ∈[0.0,1.0] (INCLUDING a fully-dead leg, θ=0), θ EXPOSED to actor+critic
+# (the W obs is NOT added — W is constant). Target = weight_rest_margins: come down softly to a LOW LEVEL belly
+# rest WITHOUT slamming, with the LOAD-CONDITIONED slam cap SLAM_CAP(80)=80+1.3·80=184N (a settled rest force
+# sits comfortably under it). illegal_contact raised to 500N so a belly rest under
+# load does not terminate — the reach-avoid g does the safety scoring; only fell_over@70° stays a live failure.
+# Trains V_compound_rest(x, θ) — the weak-mode certificate, feasible even at θ=0. Tuned two-player
+# safety-PPO recipe: ReachAvoidPPO2P.
+#   python examples/train.py --config configs/go2_compound_rest_ppo.yaml
+family: on_policy          # PPO family
+task: go2_compound_rest
+adversary: true            # -> ReachAvoidPPO2P (two-player)
+num_envs: 1024
+steps: 50000000
+seed: 0
+out: runs
+wandb_project: odd-conditioned
+
+# --- safety-PPO recipe ---
+lr: 1.0e-4
+adaptive_lr: false         # fixed LR for the sparse safety signal
+target_kl: 0.01            # KL early-stop
+ent_coef: 1.0e-3
+max_std: 0.4               # cap action std (prevents entropy runaway)
+net: "128,128,128"
+terminal_type: all         # terminal valued as min(l,g) — correct reach-avoid anchor
+
+# smaller adversarial force range (peak 25N) so the weak-leg-under-load task is winnable; identical to the
+# STAND arm.
+force_max: 25.0
