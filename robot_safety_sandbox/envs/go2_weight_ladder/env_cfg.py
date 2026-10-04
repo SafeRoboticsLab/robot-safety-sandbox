@@ -130,7 +130,7 @@ def _raise_contact_termination(cfg: ManagerBasedRlEnvCfg, force_threshold: float
 
 def weight_rest_margins(env):
   """(g, l): LOAD-CONDITIONED no-slam safety + LOW/level/settled belly-rest target. Reads the
-  ``nonfoot_ground_touch`` contact sensor (as ``soft_rest_margins`` does) and the per-env load W from
+  ``nonfoot_ground_touch`` contact sensor and the per-env load W from
   ``env._weight_W`` (zeros if unset). g = (SLAM_CAP(W) − force)/scale with SLAM_CAP(W) = 80 + 1.3·W; l is
   the min of (low, level, settled-lin, settled-ang) — satisfiable only by a low still level pose."""
   d = env.scene["robot"].data
