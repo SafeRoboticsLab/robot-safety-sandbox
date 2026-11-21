@@ -37,7 +37,7 @@ from robot_safety_sandbox.envs.go2_gap.brake_or_jump_harvest import (
   unitree_go2_harvest_env_cfg)
 
 _BANK = {}            # cache per gap width
-_BANK_PATH = "~/SAFE/jump_bank.pt"
+_BANK_PATH = "~/SAFE/jump_bank.pt"   # default; override with $RSS_JUMP_BANK
 DEFAULT_WIDTH = 0.12
 
 K_COMMIT = 7          # committed bands 0..7
@@ -58,7 +58,8 @@ def _bank(env):
   w = _gap_width(env)
   if w not in _BANK:
     import os
-    d = torch.load(os.path.expanduser(_BANK_PATH), map_location=env.device,
+    path = os.environ.get("RSS_JUMP_BANK", _BANK_PATH)
+    d = torch.load(os.path.expanduser(path), map_location=env.device,
                    weights_only=True)
     b = d["bank"].float()
     _BANK[w] = b[torch.abs(b[:, 36] - w) < 1e-3]       # this width's jump states
